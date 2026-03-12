@@ -1,0 +1,229 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Danny Road - Professional Financial Terminal Theme v3.0 (Flat Design) */
+:root {
+  /* Primary colors - Bloomberg/Wind style: Deep navy blue */
+  --primary: #0a2540;
+  --primary-deep: #001f3d;
+  --primary-dark: #0d3358;
+  --primary-light: #1a4d7a;
+  
+  /* Functional colors - Flat, no gradients */
+  --success: #00a896;        /* Rise, profit - teal */
+  --danger: #e63946;         /* Fall, loss, risk - red */
+  --warning: #ff9f1c;        /* Caution - orange */
+  --info: #1d3557;           /* Information - navy */
+  
+  /* Neutral palette - Clean grays */
+  --text-primary: #1a1a1a;
+  --text-secondary: #4a4a4a;
+  --text-tertiary: #6b7280;
+  --bg-primary: #ffffff;
+  --bg-surface: #f8f9fa;
+  --bg-secondary: #ffffff;
+  
+  /* Borders - Minimal, flat */
+  --border-light: #e0e0e0;
+  --border-medium: #cccccc;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 
+    'Microsoft YaHei', '微软雅黑', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+}
+
+/* Flat background - no gradient */
+.gradient-bg {
+  background: #ffffff;
+}
+
+/* Clean card design - flat, no shadows */
+.glass-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  transition: border-color 0.2s ease;
+}
+
+.glass-card:hover {
+  border-color: var(--primary);
+}
+
+/* Professional button styling - flat */
+.btn-primary {
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 10px 24px;
+  font-weight: 500;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--primary-dark);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Subtle hover effect - flat */
+.btn-hover {
+  transition: background 0.2s ease;
+}
+
+.btn-hover:hover {
+  background: var(--bg-surface);
+}
+
+/* Stock card - flat design */
+.stock-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  padding: 16px;
+  cursor: pointer;
+  transition: border-color 0.2s ease;
+}
+
+.stock-card:hover {
+  border-color: var(--primary);
+}
+
+.stock-card:active {
+  background: var(--bg-primary);
+}
+
+/* Input field styling - flat */
+.input-field {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid var(--border-medium);
+  border-radius: 4px;
+  font-size: 14px;
+  transition: border-color 0.2s ease;
+  background: var(--bg-primary);
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.input-field::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* Fade in animation - subtle */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out;
+}
+
+/* Slide in animation - professional */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slide-in {
+  animation: slideIn 0.4s ease-out;
+}
+
+/* Progress bar animation */
+@keyframes progressFill {
+  from {
+    width: 0%;
+  }
+}
+
+.animate-progress {
+  animation: progressFill 1s ease-out forwards;
+}
+
+/* Loading spinner - clean and minimal */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Section headers - flat */
+.section-header {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+/* Data display cards - flat */
+.data-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  padding: 16px;
+}
+
+/* Positive/Negative indicators */
+.text-positive {
+  color: var(--success);
+}
+
+.text-negative {
+  color: var(--danger);
+}
+
+/* Badge styling - flat */
+.badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.badge-primary {
+  background: #e8f0f8;
+  color: var(--primary);
+}
+
+/* Responsive utilities */
+@media (max-width: 768px) {
+  .glass-card {
+    padding: 12px;
+  }
+  
+  .stock-card {
+    padding: 12px;
+  }
+}

@@ -1,0 +1,807 @@
+/**
+ * 动态选股与热门板块分析服务
+ * 功能：从真实API获取数据，筛选支撑位附近的股票
+ */
+
+// ==================== 类型定义 ====================
+
+export interface StockRecommendation {
+  code: string;
+  name: string;
+  score: number;
+  confidence?: number;
+  factors: {
+    valuation: number;
+    growth: number;
+    scale: number;
+    momentum: number;
+    quality: number;
+    support: number;
+  };
+  metrics: {
+    pe: number;
+    peg: number;
+    pb: number;
+    roe: number;
+    profitGrowth: number;
+    marketCap: number;
+    currentPrice: number;
+    support: number;
+    resistance: number;
+    distanceToSupport: number;
+    upwardSpace: number;
+    sector?: string;
+  };
+  recommendation: '强烈推荐' | '推荐' | '谨慎推荐' | '观望';
+}
+
+export interface HotSector {
+  name: string;
+  score: number;
+  dimensions: {
+    sentiment: number;
+    capital: number;
+    technical: number;
+    fundamental: number;
+  };
+  trend: '强势热点' | '持续热点' | '新兴热点' | '降温';
+  topStocks: string[];
+}
+
+export interface MonteCarloResult {
+  scenarios: Array<{
+    type: '乐观' | '基准' | '悲观';
+    probability: number;
+    priceRange: [number, number];
+    expectedReturn: number;
+  }>;
+  upProbability: number;
+  downProbability: number;
+  expectedPrice: number;
+  riskRewardRatio: number;
+  derivationSteps: string[];
+}
+
+// ==================== 数据获取层 ====================
+
+class DataFetcher {
+  private readonly EASTMONEY_BASE = 'https://push2.eastmoney.com/api';
+  private readonly KLINE_BASE = 'https://push2his.eastmoney.com/api';
+  private readonly MAX_RETRIES = 3;
+  private readonly RETRY_DELAY = 1000; // 1秒
+
+  // 带重试机制的fetch
+  private async fetchWithRetry(url: string, retries: number = this.MAX_RETRIES): Promise<Response> {
+    let lastError: Error | null = null;
+    
+    for (let i = 0; i < retries; i++) {
+      try {
+        const response = await fetch(url);
+        if (response.ok) return response;
+        
+        // 如果是服务器错误，尝试重试
+        if (response.status >= 500) {
+          throw new Error(`Server error: ${response.status}`);
+        }
+        
+        // 其他错误直接返回
+        return response;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        console.warn(`[API] 请求失败 (${i + 1}/${retries}):`, lastError.message);
+        
+        if (i < retries - 1) {
+          await this.delay(this.RETRY_DELAY * (i + 1)); // 指数退避
+        }
+      }
+    }
+    
+    throw lastError || new Error('Max retries exceeded');
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // 获取股票实时行情 - 使用腾讯API作为备选
+  async fetchStockQuote(stockCode: string): Promise<any> {
+    try {
+      // 首先尝试东方财富API
+      const secId = this.getSecId(stockCode);
+      const url = `/api/eastmoney/quote?ut=fa5fd1943c7b386f172d6893dbfba10b&fltt=2&invt=2&volt=2&fields=f43,f57,f58,f162,f163,f167,f169,f170,f164,f116&secid=${secId}`;
+      
+      console.log(`[东方财富API] 获取行情: ${stockCode}`);
+      
+      const response = await fetch(url);
+      const data = await response.json();
+      
+      console.log(`[东方财富API] ${stockCode} 返回:`, data);
+      
+      // 如果东方财富API返回有效数据
+      if (data.data && data.data.f43) {
+        return {
+          code: stockCode,
+          name: data.data.f58 || stockCode,
+          currentPrice: data.data.f43,
+          pe: data.data.f162 ? data.data.f162 / 100 : 0,
+          peg: data.data.f163 ? data.data.f163 / 100 : 0,
+          pb: data.data.f167 ? data.data.f167 / 100 : 0,
+          profitGrowth: data.data.f169 ? data.data.f169 / 100 : 0,
+          revenueGrowth: data.data.f170 ? data.data.f170 / 100 : 0,
+          roe: data.data.f164 ? data.data.f164 / 100 : 0,
+          marketCap: data.data.f116 || 0
+        };
+      }
+      
+      // 东方财富API失败，尝试腾讯API
+      console.log(`[东方财富API] ${stockCode} 无数据，尝试腾讯API`);
+      return await this.fetchTencentQuote(stockCode);
+      
+    } catch (error) {
+      console.error(`[东方财富API] 获取${stockCode}失败:`, error);
+      // 尝试腾讯API作为备选
+      return await this.fetchTencentQuote(stockCode);
+    }
+  }
+  
+  // 使用腾讯API获取股票行情
+  private async fetchTencentQuote(stockCode: string): Promise<any> {
+    try {
+      const prefix = stockCode.startsWith('6') ? 'sh' : 'sz';
+      const url = `/api/tencent/quote?code=${prefix}${stockCode}`;
+      
+      console.log(`[腾讯API] 获取行情: ${stockCode}`);
+      
+      const response = await fetch(url);
+      const text = await response.text();
+      
+      // 解析腾讯API返回格式: v_sh600519="1~贵州茅台~600519~1500.00~..."
+      const match = text.match(/v_(sh|sz)\d+="([^"]+)"/);
+      if (!match) {
+        console.log(`[腾讯API] ${stockCode} 无数据返回`);
+        return null;
+      }
+      
+      const parts = match[2].split('~');
+      if (parts.length < 3) {
+        console.log(`[腾讯API] ${stockCode} 数据格式不完整`);
+        return null;
+      }
+      
+      // 腾讯API字段: parts[1]=名称, parts[2]=代码, parts[3]=当前价
+      const name = parts[1] || stockCode;
+      const currentPrice = parseFloat(parts[3]) || 0;
+      
+      if (currentPrice <= 0) {
+        console.log(`[腾讯API] ${stockCode} 价格无效`);
+        return null;
+      }
+      
+      console.log(`[腾讯API] ${stockCode} 成功: ${name} ¥${currentPrice}`);
+      
+      return {
+        code: stockCode,
+        name: name,
+        currentPrice: currentPrice,
+        pe: 0,
+        peg: 0,
+        pb: 0,
+        profitGrowth: 0,
+        revenueGrowth: 0,
+        roe: 0,
+        marketCap: 0
+      };
+    } catch (error) {
+      console.error(`[腾讯API] 获取${stockCode}失败:`, error);
+      return null;
+    }
+  }
+
+  // 获取股票K线数据并计算支撑位（使用东方财富K线API，腾讯API作为备选）
+  async fetchSupportResistance(stockCode: string, currentPrice?: number): Promise<{support: number, resistance: number, klines?: any[]} | null> {
+    try {
+      // 首先尝试东方财富K线API
+      const result = await this.fetchEastmoneyKline(stockCode, currentPrice);
+      if (result) {
+        return result;
+      }
+      
+      // 东方财富失败，尝试腾讯K线API作为备选
+      console.log(`[支撑阻力] ${stockCode}: 东方财富API失败，尝试腾讯API`);
+      const tencentResult = await this.fetchTencentKline(stockCode, currentPrice);
+      if (tencentResult) {
+        return tencentResult;
+      }
+      
+      // 两个API都失败，返回估算值
+      return this.getEstimatedSupportResistance(stockCode, currentPrice);
+    } catch (error) {
+      console.error(`[支撑阻力] 获取${stockCode}K线失败:`, error);
+      return this.getEstimatedSupportResistance(stockCode, currentPrice);
+    }
+  }
+  
+  // 东方财富K线API
+  private async fetchEastmoneyKline(stockCode: string, currentPrice?: number): Promise<{support: number, resistance: number, klines: any[]} | null> {
+    try {
+      const secId = this.getSecId(stockCode);
+      const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secId}&klt=101&fqt=1&lmt=60&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61`;
+      
+      console.log(`[东方财富K线] 获取: ${stockCode}`);
+      
+      const response = await this.fetchWithRetry(url);
+      const data = await response.json();
+      
+      // 验证数据格式
+      if (!data || !data.data || !data.data.klines || data.data.klines.length < 20) {
+        console.warn(`[东方财富K线] ${stockCode}: 数据不足或格式错误`, data);
+        return null;
+      }
+      
+      const klines = data.data.klines.map((k: string) => {
+        const parts = k.split(',');
+        return {
+          date: parts[0],
+          open: parseFloat(parts[1]),
+          close: parseFloat(parts[2]),
+          low: parseFloat(parts[3]),
+          high: parseFloat(parts[4]),
+          volume: parseFloat(parts[5])
+        };
+      });
+      
+      // 计算支撑位和阻力位
+      const prices = klines.map((k: any) => k.close);
+      const lows = klines.map((k: any) => k.low);
+      const highs = klines.map((k: any) => k.high);
+      
+      // 计算支撑位：最近20天最低点 * 0.95
+      const recentLows = lows.slice(-20);
+      const recentLow = Math.min(...recentLows);
+      const support = recentLow * 0.95;
+      
+      // 计算阻力位：最近20天最高点 * 1.05
+      const recentHighs = highs.slice(-20);
+      const recentHigh = Math.max(...recentHighs);
+      const resistance = recentHigh * 1.05;
+      
+      console.log(`[东方财富K线] ${stockCode}: 支撑=${support.toFixed(2)}, 阻力=${resistance.toFixed(2)}, 数据点=${klines.length}`);
+      return { support, resistance, klines };
+    } catch (error) {
+      console.error(`[东方财富K线] ${stockCode} 失败:`, error);
+      return null;
+    }
+  }
+  
+  // 腾讯K线API（备选方案）
+  private async fetchTencentKline(stockCode: string, currentPrice?: number): Promise<{support: number, resistance: number, klines: any[]} | null> {
+    try {
+      const prefix = stockCode.startsWith('6') ? 'sh' : 'sz';
+      const url = `/api/tencent/kline?code=${prefix}${stockCode}&timeframe=day&days=60`;
+      
+      console.log(`[腾讯K线] 获取: ${stockCode}`);
+      
+      const response = await fetch(url);
+      
+      // 检查响应内容类型
+      const contentType = response.headers.get('content-type');
+      if (contentType && contentType.includes('text/html')) {
+        console.warn(`[腾讯K线] ${stockCode}: 返回HTML而非JSON，可能被拦截或API变更`);
+        return null;
+      }
+      
+      const text = await response.text();
+      
+      // 尝试解析JSON
+      let data: any;
+      try {
+        data = JSON.parse(text);
+      } catch (e) {
+        console.warn(`[腾讯K线] ${stockCode}: JSON解析失败，响应内容:`, text.substring(0, 200));
+        return null;
+      }
+      
+      const stockKey = `${prefix}${stockCode}`;
+      if (!data.data || !data.data[stockKey] || !data.data[stockKey].day || data.data[stockKey].day.length < 20) {
+        console.warn(`[腾讯K线] ${stockCode}: 数据格式不正确`);
+        return null;
+      }
+      
+      const rawKlines = data.data[stockKey].day;
+      // 腾讯格式：[日期，开盘，收盘，最低，最高，成交量]
+      const klines = rawKlines.map((k: string[]) => ({
+        date: k[0],
+        open: parseFloat(k[1]),
+        close: parseFloat(k[2]),
+        low: parseFloat(k[3]),
+        high: parseFloat(k[4]),
+        volume: parseFloat(k[5])
+      }));
+      
+      const prices = klines.map((k: any) => k.close);
+      const lows = klines.map((k: any) => k.low);
+      const highs = klines.map((k: any) => k.high);
+      
+      // 计算支撑位：最近20天最低点 * 0.95
+      const recentLows = lows.slice(-20);
+      const recentLow = Math.min(...recentLows);
+      const support = recentLow * 0.95;
+      
+      // 计算阻力位：最近20天最高点 * 1.05
+      const recentHighs = highs.slice(-20);
+      const recentHigh = Math.max(...recentHighs);
+      const resistance = recentHigh * 1.05;
+      
+      console.log(`[腾讯K线] ${stockCode}: 支撑=${support.toFixed(2)}, 阻力=${resistance.toFixed(2)}`);
+      return { support, resistance, klines };
+    } catch (error) {
+      console.error(`[腾讯K线] ${stockCode} 失败:`, error);
+      return null;
+    }
+  }
+  
+  // 获取估算的支撑位和阻力位
+  private getEstimatedSupportResistance(stockCode: string, currentPrice?: number): {support: number, resistance: number, klines: any[]} | null {
+    if (!currentPrice || currentPrice <= 0) {
+      console.warn(`[支撑阻力] ${stockCode}: 无法获取估算值，当前价格无效`);
+      return null;
+    }
+    
+    const support = currentPrice * 0.9;
+    const resistance = currentPrice * 1.15;
+    console.log(`[支撑阻力] ${stockCode}: 支撑=${support.toFixed(2)}, 阻力=${resistance.toFixed(2)} (API失败，使用估算值)`);
+    
+    return { 
+      support, 
+      resistance, 
+      klines: [] 
+    };
+  }
+
+  // 获取板块资金流向（热门板块）
+  async fetchHotSectors(): Promise<any[]> {
+    try {
+      // 东方财富板块资金流向API
+      const url = 'https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=20&po=1&np=1&fltt=2&invt=2&fid=f62&fs=m:90+t:2&fields=f12,f13,f14,f20,f62,f128,f136,f140';
+      
+      const response = await fetch(url);
+      const data = await response.json();
+      
+      if (!data.data || !data.data.diff) return [];
+      
+      return data.data.diff.map((item: any) => ({
+        code: item.f12,
+        name: item.f14,
+        marketCap: item.f20,
+        netInflow: item.f62,
+        mainForceRatio: item.f128,
+        changePercent: item.f136
+      })).slice(0, 5);
+    } catch (error) {
+      console.error('获取热门板块失败:', error);
+      return [];
+    }
+  }
+
+  // 获取板块成分股
+  async fetchSectorStocks(sectorCode: string): Promise<string[]> {
+    try {
+      const url = `https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=50&po=1&np=1&fltt=2&invt=2&fid=f20&fs=b:${sectorCode}&fields=f12,f13,f14`;
+      
+      const response = await fetch(url);
+      const data = await response.json();
+      
+      if (!data.data || !data.data.diff) return [];
+      
+      return data.data.diff.map((item: any) => item.f12).slice(0, 10);
+    } catch (error) {
+      console.error(`获取板块${sectorCode}成分股失败:`, error);
+      return [];
+    }
+  }
+
+  getSecId(stockCode: string): string {
+    if (stockCode.startsWith('6')) return `1.${stockCode}`;
+    if (stockCode.startsWith('0') || stockCode.startsWith('3')) return `0.${stockCode}`;
+    return stockCode;
+  }
+}
+
+// ==================== 选股服务 ====================
+
+export class DynamicAnalysisService {
+  private dataFetcher = new DataFetcher();
+
+  // 计算估值因子
+  private calculateValuationScore(pe: number, peg: number, pb: number): number {
+    let score = 50;
+    if (pe < 20) score += 30;
+    else if (pe < 30) score += 20;
+    else if (pe < 40) score += 10;
+    else if (pe < 60) score += 0;
+    else score -= 10;
+    
+    if (peg < 1) score += 20;
+    else if (peg < 1.5) score += 10;
+    
+    if (pb < 3) score += 20;
+    else if (pb < 5) score += 10;
+    
+    return Math.min(100, Math.max(0, score));
+  }
+
+  // 计算成长因子
+  private calculateGrowthScore(profitGrowth: number): number {
+    let score = 50;
+    if (profitGrowth > 50) score += 40;
+    else if (profitGrowth > 30) score += 30;
+    else if (profitGrowth > 15) score += 20;
+    else if (profitGrowth > 0) score += 10;
+    return Math.min(100, score);
+  }
+
+  // 计算质量因子
+  private calculateQualityScore(roe: number): number {
+    let score = 50;
+    if (roe > 15) score += 40;
+    else if (roe > 10) score += 30;
+    else if (roe > 5) score += 20;
+    return Math.min(100, score);
+  }
+
+  // 主函数：获取推荐股票（从真实API）
+  async getStockRecommendations(stockCodes: string[]): Promise<StockRecommendation[]> {
+    const recommendations: StockRecommendation[] = [];
+    
+    for (const code of stockCodes) {
+      try {
+        // 1. 获取实时行情
+        const quote = await this.dataFetcher.fetchStockQuote(code);
+        if (!quote || !quote.currentPrice) continue;
+        
+        // 2. 获取支撑位/阻力位
+        const sr = await this.dataFetcher.fetchSupportResistance(code, quote.currentPrice);
+        if (!sr) continue;
+        
+        const { support, resistance } = sr;
+        const currentPrice = quote.currentPrice;
+        
+        // 3. 计算关键指标
+        const distanceToSupport = ((currentPrice - support) / support) * 100;
+        const upwardSpace = ((resistance - currentPrice) / currentPrice) * 100;
+        
+        // 4. 筛选条件：放宽到 -20%到+25%，上涨空间>=3%
+        console.log(`[筛选] ${code}: 距离支撑=${distanceToSupport.toFixed(1)}%, 上涨空间=${upwardSpace.toFixed(1)}%`);
+        if (distanceToSupport < -20 || distanceToSupport > 25) continue;
+        if (upwardSpace < 3) continue;
+        
+        // 5. 计算综合评分
+        const valuationScore = this.calculateValuationScore(quote.pe, quote.peg, quote.pb);
+        const growthScore = this.calculateGrowthScore(quote.profitGrowth);
+        const qualityScore = this.calculateQualityScore(quote.roe);
+        
+        // 支撑位得分：越接近支撑得分越高
+        let supportScore = 50;
+        if (Math.abs(distanceToSupport) <= 3) supportScore = 90;
+        else if (Math.abs(distanceToSupport) <= 5) supportScore = 80;
+        else if (distanceToSupport <= 8) supportScore = 70;
+        else supportScore = 60;
+        
+        const finalScore = Math.round(
+          valuationScore * 0.3 +
+          growthScore * 0.2 +
+          qualityScore * 0.2 +
+          supportScore * 0.3
+        );
+        
+        // 6. 确定推荐等级（放宽条件）
+        let recommendation: StockRecommendation['recommendation'] = '观望';
+        if (finalScore >= 75 && distanceToSupport <= 5) {
+          recommendation = '强烈推荐';
+        } else if (finalScore >= 65 && distanceToSupport <= 10) {
+          recommendation = '推荐';
+        } else if (finalScore >= 55 && distanceToSupport <= 15) {
+          recommendation = '谨慎推荐';
+        }
+        // 观望：其他情况，保留股票，不跳过
+        
+        recommendations.push({
+          code,
+          name: quote.name,
+          score: finalScore,
+          factors: {
+            valuation: valuationScore,
+            growth: growthScore,
+            scale: 70,
+            momentum: 70,
+            quality: qualityScore,
+            support: supportScore
+          },
+          metrics: {
+            pe: quote.pe,
+            peg: quote.peg,
+            pb: quote.pb,
+            roe: quote.roe,
+            profitGrowth: quote.profitGrowth,
+            marketCap: quote.marketCap,
+            currentPrice: Math.round(currentPrice * 100) / 100,
+            support: Math.round(support * 100) / 100,
+            resistance: Math.round(resistance * 100) / 100,
+            distanceToSupport: Math.round(distanceToSupport * 10) / 10,
+            upwardSpace: Math.round(upwardSpace * 10) / 10
+          },
+          recommendation
+        });
+        
+      } catch (error) {
+        console.error(`分析${code}失败:`, error);
+      }
+    }
+    
+    // 按距支撑位排序
+    return recommendations.sort((a, b) => {
+      return Math.abs(a.metrics.distanceToSupport) - Math.abs(b.metrics.distanceToSupport);
+    });
+  }
+
+  // 获取热门板块
+  async getHotSectors(): Promise<HotSector[]> {
+    try {
+      // 尝试从东方财富API获取真实板块数据
+      const sectors = await this.dataFetcher.fetchHotSectors();
+      
+      if (sectors.length > 0) {
+        // 将API返回的数据转换为HotSector格式
+        const hotSectors: HotSector[] = [];
+        
+        for (const sector of sectors.slice(0, 5)) {
+          // 获取板块成分股
+          const topStocks = await this.dataFetcher.fetchSectorStocks(sector.code);
+          
+          // 数据验证：确保所有数值字段都有默认值
+          const mainForceRatio = this.safeNumber(sector.mainForceRatio, 0);
+          const changePercent = this.safeNumber(sector.changePercent, 0);
+          
+          // 计算综合评分（添加数据验证防止NaN）
+          const capitalScore = this.clampNumber(50 + mainForceRatio * 0.5, 0, 100);
+          const sentimentScore = this.clampNumber(50 + changePercent * 2, 0, 100);
+          const technicalScore = this.clampNumber((capitalScore + sentimentScore) / 2 * 0.9, 0, 100);
+          const fundamentalScore = this.clampNumber((capitalScore + sentimentScore) / 2 * 0.85, 0, 100);
+          const score = Math.round(this.safeNumber((capitalScore + sentimentScore) / 2, 50));
+          
+          // 确定趋势
+          let trend: HotSector['trend'] = '持续热点';
+          if (score >= 85) trend = '强势热点';
+          else if (score >= 75 && changePercent > 3) trend = '新兴热点';
+          else if (score < 70) trend = '降温';
+          
+          hotSectors.push({
+            name: sector.name || '未知板块',
+            score,
+            dimensions: {
+              sentiment: Math.round(sentimentScore),
+              capital: Math.round(capitalScore),
+              technical: Math.round(technicalScore),
+              fundamental: Math.round(fundamentalScore)
+            },
+            trend,
+            topStocks: topStocks.length > 0 ? topStocks : ['000001', '000002', '000063']
+          });
+        }
+        
+        return hotSectors;
+      }
+    } catch (error) {
+      console.error('[热门板块] API获取失败:', error);
+    }
+    
+    // API失败时返回提示数据
+    return [
+      {
+        name: '数据暂不可用',
+        score: 0,
+        dimensions: { sentiment: 0, capital: 0, technical: 0, fundamental: 0 },
+        trend: '降温',
+        topStocks: []
+      }
+    ];
+  }
+  
+  // 辅助方法：安全获取数值，防止NaN
+  private safeNumber(value: any, defaultValue: number = 0): number {
+    if (value === null || value === undefined) return defaultValue;
+    const num = Number(value);
+    return isNaN(num) ? defaultValue : num;
+  }
+  
+  // 辅助方法：限制数值范围
+  private clampNumber(value: number, min: number, max: number): number {
+    if (isNaN(value)) return min;
+    return Math.min(max, Math.max(min, value));
+  }
+
+  // 蒙特卡洛模拟（使用传入的历史价格）
+  async runMonteCarlo(currentPrice: number, historicalPrices: number[]): Promise<MonteCarloResult> {
+    // 如果历史价格数据不足，使用默认参数进行模拟
+    if (!historicalPrices || historicalPrices.length < 20) {
+      console.warn('[蒙特卡洛] 历史价格数据不足，使用默认波动率参数');
+      return this.runMonteCarloWithDefaults(currentPrice);
+    }
+    
+    const returns = [];
+    for (let i = 1; i < historicalPrices.length; i++) {
+      returns.push(Math.log(historicalPrices[i] / historicalPrices[i - 1]));
+    }
+
+    const avgReturn = returns.reduce((a, b) => a + b, 0) / returns.length;
+    const variance = returns.reduce((sum, r) => sum + Math.pow(r - avgReturn, 2), 0) / returns.length;
+    const volatility = Math.sqrt(variance);
+    const drift = avgReturn - (variance / 2);
+
+    const simulations = 10000;
+    const finalPrices: number[] = [];
+    
+    for (let i = 0; i < simulations; i++) {
+      let price = currentPrice;
+      for (let day = 0; day < 7; day++) {
+        const z = Math.sqrt(-2 * Math.log(Math.random())) * Math.cos(2 * Math.PI * Math.random());
+        price = price * Math.exp(drift + volatility * z);
+      }
+      finalPrices.push(price);
+    }
+
+    const upCount = finalPrices.filter(p => p > currentPrice).length;
+    const upProbability = Math.round((upCount / simulations) * 100 * 10) / 10;
+    const downProbability = Math.round(((simulations - upCount) / simulations) * 100 * 10) / 10;
+
+    finalPrices.sort((a, b) => a - b);
+    const p10 = finalPrices[Math.floor(simulations * 0.10)];
+    const p50 = finalPrices[Math.floor(simulations * 0.50)];
+    const p90 = finalPrices[Math.floor(simulations * 0.90)];
+
+    return {
+      scenarios: [
+        {
+          type: '乐观',
+          probability: 20,
+          priceRange: [p50, p90],
+          expectedReturn: Math.round(((p90 - currentPrice) / currentPrice) * 100 * 10) / 10
+        },
+        {
+          type: '基准',
+          probability: 60,
+          priceRange: [p50 * 0.95, p50 * 1.05],
+          expectedReturn: Math.round(((p50 - currentPrice) / currentPrice) * 100 * 10) / 10
+        },
+        {
+          type: '悲观',
+          probability: 20,
+          priceRange: [p10, p50],
+          expectedReturn: Math.round(((p10 - currentPrice) / currentPrice) * 100 * 10) / 10
+        }
+      ],
+      upProbability,
+      downProbability,
+      expectedPrice: p50,
+      riskRewardRatio: Math.round(Math.abs((p90 - currentPrice) / (currentPrice - p10)) * 100) / 100,
+      derivationSteps: [
+        '步骤1：计算历史收益率序列',
+        `步骤2：平均收益率 μ = ${(avgReturn * 100).toFixed(4)}%`,
+        `步骤3：波动率 σ = ${(volatility * 100).toFixed(4)}%`,
+        '步骤4：运行10000次蒙特卡洛模拟',
+        '步骤5：统计7日后价格分布'
+      ]
+    };
+  }
+
+  // 使用默认参数运行蒙特卡洛模拟（当历史数据不足时）
+  private runMonteCarloWithDefaults(currentPrice: number): MonteCarloResult {
+    // 使用A股市场典型波动率参数（年化约25%）
+    const annualVolatility = 0.25;
+    const dailyVolatility = annualVolatility / Math.sqrt(252);
+    const drift = 0.0002; // 假设每日微涨
+    
+    const simulations = 10000;
+    const finalPrices: number[] = [];
+    
+    for (let i = 0; i < simulations; i++) {
+      let price = currentPrice;
+      for (let day = 0; day < 7; day++) {
+        const z = Math.sqrt(-2 * Math.log(Math.random())) * Math.cos(2 * Math.PI * Math.random());
+        price = price * Math.exp(drift + dailyVolatility * z);
+      }
+      finalPrices.push(price);
+    }
+
+    const upCount = finalPrices.filter(p => p > currentPrice).length;
+    const upProbability = Math.round((upCount / simulations) * 100 * 10) / 10;
+    const downProbability = Math.round(((simulations - upCount) / simulations) * 100 * 10) / 10;
+
+    finalPrices.sort((a, b) => a - b);
+    const p10 = finalPrices[Math.floor(simulations * 0.10)];
+    const p50 = finalPrices[Math.floor(simulations * 0.50)];
+    const p90 = finalPrices[Math.floor(simulations * 0.90)];
+
+    return {
+      scenarios: [
+        {
+          type: '乐观',
+          probability: 20,
+          priceRange: [p50, p90],
+          expectedReturn: Math.round(((p90 - currentPrice) / currentPrice) * 100 * 10) / 10
+        },
+        {
+          type: '基准',
+          probability: 60,
+          priceRange: [p50 * 0.95, p50 * 1.05],
+          expectedReturn: Math.round(((p50 - currentPrice) / currentPrice) * 100 * 10) / 10
+        },
+        {
+          type: '悲观',
+          probability: 20,
+          priceRange: [p10, p50],
+          expectedReturn: Math.round(((p10 - currentPrice) / currentPrice) * 100 * 10) / 10
+        }
+      ],
+      upProbability,
+      downProbability,
+      expectedPrice: p50,
+      riskRewardRatio: Math.round(Math.abs((p90 - currentPrice) / (currentPrice - p10)) * 100) / 100,
+      derivationSteps: [
+        '步骤1：使用A股市场默认波动率参数（年化25%）',
+        `步骤2：平均收益率 μ = ${(drift * 100).toFixed(4)}%`,
+        `步骤3：波动率 σ = ${(dailyVolatility * 100).toFixed(4)}%（日波动）`,
+        '步骤4：运行10000次蒙特卡洛模拟',
+        '步骤5：统计7日后价格分布',
+        '注：历史数据不足，使用市场典型参数'
+      ]
+    };
+  }
+
+  // 从股票代码获取K线数据并运行蒙特卡洛模拟
+  async runMonteCarloForStock(stockCode: string): Promise<MonteCarloResult | null> {
+    try {
+      // 1. 获取实时行情
+      const quote = await this.dataFetcher.fetchStockQuote(stockCode);
+      if (!quote || !quote.currentPrice) {
+        console.error(`[蒙特卡洛] 无法获取${stockCode}的行情数据`);
+        return null;
+      }
+      
+      // 2. 获取K线数据
+      const klineData = await this.dataFetcher.fetchSupportResistance(stockCode);
+      if (!klineData) {
+        console.error(`[蒙特卡洛] 无法获取${stockCode}的K线数据`);
+        // 使用默认参数
+        return this.runMonteCarloWithDefaults(quote.currentPrice);
+      }
+      
+      // 3. 获取完整K线历史价格
+      const secId = this.dataFetcher.getSecId(stockCode);
+      const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secId}&klt=101&fqt=1&lmt=60&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61`;
+      
+      const response = await fetch(url);
+      const data = await response.json();
+      
+      if (!data.data || !data.data.klines || data.data.klines.length < 20) {
+        console.warn(`[蒙特卡洛] ${stockCode} K线数据不足，使用默认参数`);
+        return this.runMonteCarloWithDefaults(quote.currentPrice);
+      }
+      
+      // 4. 提取收盘价历史
+      const historicalPrices = data.data.klines.map((k: string) => {
+        const parts = k.split(',');
+        return parseFloat(parts[2]); // 收盘价
+      });
+      
+      // 5. 运行蒙特卡洛模拟
+      return this.runMonteCarlo(quote.currentPrice, historicalPrices);
+      
+    } catch (error) {
+      console.error(`[蒙特卡洛] ${stockCode}模拟失败:`, error);
+      return null;
+    }
+  }
+}
+
+export const dynamicAnalysisService = new DynamicAnalysisService();

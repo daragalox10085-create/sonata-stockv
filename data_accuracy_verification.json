@@ -1,0 +1,233 @@
+{
+  "report_metadata": {
+    "title": "股票分析系统数据准确性验证报告",
+    "generated_at": "2026-03-06 20:30:00",
+    "test_stocks": [
+      {"symbol": "600519", "name": "贵州茅台"},
+      {"symbol": "002594", "name": "比亚迪"},
+      {"symbol": "300750", "name": "宁德时代"}
+    ]
+  },
+  "accuracy_scores": {
+    "total": 71.4,
+    "level": "合格",
+    "dimensions": {
+      "api_data_source": {"score": 0.0, "max": 100, "status": "failed", "reason": "东方财富 API 连接失败（网络问题）"},
+      "price_cross_validation": {"score": 0.0, "max": 100, "status": "failed", "reason": "东方财富网站连接失败（网络问题）"},
+      "calculation_logic": {"score": 100.0, "max": 100, "status": "passed"},
+      "quant_score_logic": {"score": 100.0, "max": 100, "status": "passed"},
+      "monte_carlo_params": {"score": 100.0, "max": 100, "status": "passed"},
+      "market_cap_calculation": {"score": 100.0, "max": 100, "status": "passed"},
+      "data_update_mechanism": {"score": 100.0, "max": 100, "status": "passed"}
+    }
+  },
+  "api_verification": {
+    "tencent_api": {
+      "status": "operational",
+      "success_rate": "100%",
+      "tested_stocks": ["600519", "002594", "300750"]
+    },
+    "eastmoney_api": {
+      "status": "connection_failed",
+      "success_rate": "0%",
+      "reason": "网络代理问题",
+      "tested_stocks": ["600519", "002594", "300750"]
+    }
+  },
+  "price_data": {
+    "600519": {
+      "symbol": "600519",
+      "name": "贵州茅台",
+      "current_price": 1402.00,
+      "open": 1395.00,
+      "high": 1407.50,
+      "low": 1388.00,
+      "source": "腾讯 API",
+      "timestamp": "2026-03-06 20:30:00"
+    },
+    "002594": {
+      "symbol": "002594",
+      "name": "比亚迪",
+      "current_price": 93.62,
+      "open": 96.00,
+      "high": 96.00,
+      "low": 93.25,
+      "source": "腾讯 API",
+      "timestamp": "2026-03-06 20:30:00"
+    },
+    "300750": {
+      "symbol": "300750",
+      "name": "宁德时代",
+      "current_price": 354.77,
+      "open": 349.00,
+      "high": 357.02,
+      "low": 344.66,
+      "source": "腾讯 API",
+      "timestamp": "2026-03-06 20:30:00"
+    }
+  },
+  "calculation_logic_verification": {
+    "support_resistance": {
+      "formula": "support = current_price * 0.95, resistance = current_price * 1.05",
+      "status": "passed",
+      "test_results": [
+        {"symbol": "600519", "current": 1402.00, "support": 1331.90, "resistance": 1472.10, "passed": true},
+        {"symbol": "002594", "current": 93.62, "support": 88.94, "resistance": 98.30, "passed": true},
+        {"symbol": "300750", "current": 354.77, "support": 337.03, "resistance": 372.51, "passed": true}
+      ]
+    },
+    "fibonacci": {
+      "formula": "fib = support + (resistance - support) * ratio",
+      "ratios": [0.236, 0.382, 0.5, 0.618, 0.786],
+      "status": "passed",
+      "test_results": [
+        {
+          "symbol": "600519",
+          "levels": {
+            "0.236": 1364.99,
+            "0.382": 1385.46,
+            "0.5": 1402.00,
+            "0.618": 1418.54,
+            "0.786": 1442.10
+          },
+          "passed": true
+        }
+      ]
+    },
+    "risk_reward": {
+      "formula": "ratio = (take_profit - buy_price) / (buy_price - stop_loss)",
+      "status": "passed",
+      "test_results": [
+        {"symbol": "600519", "buy": 1331.90, "stop": 1289.84, "take": 1472.10, "ratio": 3.33, "passed": true},
+        {"symbol": "002594", "buy": 88.94, "stop": 86.13, "take": 98.30, "ratio": 3.33, "passed": true},
+        {"symbol": "300750", "buy": 337.03, "stop": 326.39, "take": 372.51, "ratio": 3.33, "passed": true}
+      ]
+    }
+  },
+  "quant_score_weights": {
+    "dimensions": {
+      "trend": 0.20,
+      "position": 0.20,
+      "momentum": 0.20,
+      "sentiment": 0.20,
+      "risk_reward": 0.20
+    },
+    "total": 1.0,
+    "status": "passed",
+    "sub_dimensions": {
+      "trend": {"ma": 0.30, "macd": 0.30, "trendStrength": 0.40, "total": 1.0},
+      "position": {"supportResistance": 0.40, "fibonacci": 0.30, "historicalHighLow": 0.30, "total": 1.0},
+      "momentum": {"rsi": 0.40, "volumeRatio": 0.30, "priceChangeRate": 0.30, "total": 1.0},
+      "sentiment": {"fundFlow": 0.50, "marketHeat": 0.50, "total": 1.0}
+    }
+  },
+  "monte_carlo_params": {
+    "model": "Geometric Brownian Motion",
+    "formula": "dS = μS dt + σS dW",
+    "drift_correction": "drift = μ - 0.5σ²",
+    "simulation_count": 10000,
+    "days_to_simulate": 5,
+    "historical_days": 360,
+    "min_data_points": 30,
+    "status": "passed"
+  },
+  "market_cap_calculation": {
+    "formula": "market_cap = current_price * total_shares",
+    "status": "passed",
+    "test_results": [
+      {
+        "symbol": "600519",
+        "current_price": 1402.00,
+        "total_shares": 1250000000,
+        "calculated_market_cap": 1752500000000,
+        "market_cap_yi": 17525.00,
+        "passed": true
+      },
+      {
+        "symbol": "002594",
+        "current_price": 93.62,
+        "total_shares": 2900000000,
+        "calculated_market_cap": 271498000000,
+        "market_cap_yi": 2714.98,
+        "passed": true
+      },
+      {
+        "symbol": "300750",
+        "current_price": 354.77,
+        "total_shares": 4400000000,
+        "calculated_market_cap": 1560988000000,
+        "market_cap_yi": 15609.88,
+        "passed": true
+      }
+    ]
+  },
+  "data_update_mechanism": {
+    "real_time_api": ["腾讯财经", "东方财富"],
+    "kline_api": "新浪财经",
+    "trigger": "用户搜索时实时获取",
+    "fallback_strategy": "腾讯→东方财富→失败",
+    "timeout_seconds": "5-10",
+    "performance_test": {
+      "first_request_seconds": 1.13,
+      "second_request_seconds": 3.24,
+      "total_seconds": 3.24,
+      "status": "passed"
+    }
+  },
+  "issues": [
+    {
+      "id": 1,
+      "priority": "high",
+      "category": "API 数据源",
+      "description": "东方财富 API 连接失败（网络代理问题）",
+      "impact": "降级策略会切换到腾讯 API，不影响功能",
+      "recommendation": "检查网络代理配置，确保可以访问东方财富 API"
+    },
+    {
+      "id": 2,
+      "priority": "medium",
+      "category": "市值计算",
+      "description": "总股本数据为预设值，非实时获取",
+      "impact": "市值计算可能与实际有偏差",
+      "recommendation": "从 API 获取实时总股本数据（东方财富 API 的 f59 字段）"
+    },
+    {
+      "id": 3,
+      "priority": "low",
+      "category": "支撑/阻力位",
+      "description": "使用固定百分比 (±5%) 计算",
+      "impact": "可能不够精确，未考虑实际技术位",
+      "recommendation": "考虑使用真实历史高低点或布林带等技术指标"
+    }
+  ],
+  "conclusion": {
+    "overall_status": "合格",
+    "overall_score": 71.4,
+    "passed_checks": [
+      "计算逻辑完全正确（支撑位/阻力位/斐波那契/盈亏比）",
+      "量化评分权重配置合理（五维各 20%，子项权重总和 100%）",
+      "蒙特卡洛模拟参数符合标准（GBM 模型、10000 次模拟）",
+      "市值计算公式正确（当前价×总股本）",
+      "数据更新机制正常（实时获取、降级策略有效）"
+    ],
+    "warnings": [
+      "东方财富 API 连接问题（网络代理导致，非代码问题）",
+      "总股本数据为预设值，建议从 API 实时获取",
+      "支撑/阻力位计算可优化为基于真实技术位"
+    ],
+    "recommendations": {
+      "short_term": [
+        "检查网络代理配置，确保东方财富 API 可访问",
+        "从 API 获取实时总股本数据（东方财富 f59 字段）"
+      ],
+      "medium_term": [
+        "优化支撑/阻力位计算，使用真实历史高低点",
+        "增加更多 API 数据源（如新浪财经）作为备选"
+      ],
+      "long_term": [
+        "实现数据缓存机制，减少 API 请求",
+        "增加数据质量监控，自动检测异常数据"
+      ]
+    }
+  }
+}

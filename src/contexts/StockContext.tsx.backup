@@ -1,0 +1,248 @@
+import React, { createContext, useContext, useState, useCallback } from 'react';
+
+export interface StockData {
+  symbol: string;
+  name: string;
+  currentPrice: number;
+  change: number;
+  changePercent: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  marketCap: number;
+  kLineData: KLinePoint[];
+  quantScore: number;
+  quantSummary: string;
+  detailedAdvice: string; // 详细关键建议
+  support: number;
+  resistance: number;
+  stopLoss: number;
+  takeProfit1: number;
+  takeProfit2: number;
+  // 优化后的量化总结字段
+  importance: 'high' | 'medium' | 'low'; // 重要程度
+  trendAnalysis: string; // 趋势判断
+  supportPrice: number; // 支撑价位
+  resistancePrice: number; // 阻力价位
+  actionAdvice: string; // 操作建议
+  riskWarning: string; // 风险提示
+  // 推导逻辑数据
+  analysis: {
+    trend: { score: number; reason: string; };
+    position: { score: number; reason: string; };
+    momentum: { score: number; reason: string; };
+    volume: { score: number; reason: string; };
+    sentiment: { score: number; reason: string; data: { policy: number; fund: number; tech: number; emotion: number; }; };
+  };
+}
+
+export interface KLinePoint {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+interface StockContextType {
+  stockData: StockData | null;
+  isLoading: boolean;
+  loadStock: (symbol: string, name: string) => Promise<void>;
+  clearStock: () => void;
+}
+
+const StockContext = createContext<StockContextType | undefined>(undefined);
+
+// 生成模拟 K 线数据
+function generateKLineData(basePrice: number, days: number = 360): KLinePoint[] {
+  const data: KLinePoint[] = [];
+  let price = basePrice * 0.9;
+  const volatility = basePrice * 0.02;
+  
+  for (let i = days; i >= 0; i--) {
+    const date = new Date();
+    date.setDate(date.getDate() - i);
+    const dateStr = date.toISOString().split('T')[0];
+    
+    const change = (Math.random() - 0.5) * volatility;
+    const open = price;
+    const close = price + change;
+    const high = Math.max(open, close) + Math.random() * volatility * 0.5;
+    const low = Math.min(open, close) - Math.random() * volatility * 0.5;
+    
+    data.push({
+      date: dateStr,
+      open: parseFloat(open.toFixed(4)),
+      close: parseFloat(close.toFixed(4)),
+      high: parseFloat(high.toFixed(4)),
+      low: parseFloat(low.toFixed(4)),
+      volume: Math.floor(Math.random() * 10000000) + 5000000
+    });
+    
+    price = close;
+  }
+  
+  return data;
+}
+
+// 股票名称映射
+const stockNameMap: Record<string, string> = {
+  '513310': '中韩半导体 ETF',
+  '600519': '贵州茅台',
+  '000858': '五粮液',
+  '300750': '宁德时代',
+  '002594': '比亚迪',
+  '510300': '沪深 300ETF'
+};
+
+// 基础价格映射
+const basePriceMap: Record<string, number> = {
+  '513310': 3.63,
+  '600519': 1680.0,
+  '000858': 168.5,
+  '300750': 185.2,
+  '002594': 258.6,
+  '510300': 3.85
+};
+
+export function StockProvider({ children }: { children: React.ReactNode }) {
+  const [stockData, setStockData] = useState<StockData | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const loadStock = useCallback(async (symbol: string, name?: string) => {
+    setIsLoading(true);
+    
+    // 模拟 API 延迟
+    await new Promise(resolve => setTimeout(resolve, 800));
+    
+    const stockName = name || stockNameMap[symbol] || '自定义股票';
+    const basePrice = basePriceMap[symbol] || (Math.random() * 100 + 10);
+    
+    // 生成数据
+    const kLineData = generateKLineData(basePrice);
+    const latestPoint = kLineData[kLineData.length - 1];
+    const prevPoint = kLineData[kLineData.length - 2];
+    
+    const change = latestPoint.close - prevPoint.close;
+    const changePercent = (change / prevPoint.close) * 100;
+    
+    // 计算量化评分（基于多个维度）
+    const trendScore = Math.floor(Math.random() * 40 + 50);
+    const positionScore = Math.floor(Math.random() * 40 + 50);
+    const momentumScore = Math.floor(Math.random() * 40 + 50);
+    const volumeScore = Math.floor(Math.random() * 40 + 50);
+    const sentimentScore = Math.floor(Math.random() * 40 + 50);
+    const quantScore = Math.floor((trendScore + positionScore + momentumScore + volumeScore + sentimentScore) / 5);
+    const isBullish = quantScore >= 60;
+    
+    // 关键价位计算
+    const support = parseFloat((latestPoint.close * 0.95).toFixed(2));
+    const resistance = parseFloat((latestPoint.close * 1.08).toFixed(2));
+    const stopLoss = parseFloat((latestPoint.close * 0.92).toFixed(2));
+    const takeProfit1 = parseFloat((latestPoint.close * 1.05).toFixed(2));
+    const takeProfit2 = parseFloat((latestPoint.close * 1.10).toFixed(2));
+    
+    // 详细关键建议（100-150 字）
+    const detailedAdvice = `【趋势判断】${isBullish ? '短期多头主导' : '短期空头主导'}，RSI ${isBullish ? '超买回调概率 60%' : '超卖反弹概率 65%'}。【关键价位】支撑位¥${support}，阻力位¥${resistance}。【操作建议】${isBullish ? '逢低布局，仓位 20-30%' : '观望等待，若已持仓反弹减仓'}。【止损止盈】跌破¥${stopLoss}止损，第一目标¥${takeProfit1}，第二目标¥${takeProfit2}。【风险】${volumeScore < 50 ? '成交量萎缩，警惕变盘' : '成交量正常，趋势可持续'}。`;
+    
+    const quantSummary = isBullish
+      ? `📊 量化评分 ${quantScore}/100 多头信号，建议逢低布局。支撑位¥${support}，阻力位¥${resistance}，止损¥${stopLoss}。`
+      : `📊 量化评分 ${quantScore}/100 空头信号，建议观望等待。若跌破¥${stopLoss}需止损，反弹至¥${takeProfit1}可减仓。`;
+    
+    // 优化后的量化总结字段
+    const importance: 'high' | 'medium' | 'low' = quantScore >= 70 ? 'high' : quantScore >= 55 ? 'medium' : 'low';
+    const trendAnalysis = isBullish
+      ? `短期多头主导，RSI 进入超买区但动能仍强，MACD 金叉确认上涨趋势。成交量温和放大，资金流入明显。预计短期延续震荡上行，但需警惕技术性回调压力。`
+      : `短期空头主导，RSI 超卖反弹概率 65%，MACD 死叉向下。成交量萎缩，市场观望情绪浓厚。预计延续弱势震荡，等待明确企稳信号。`;
+    const actionAdvice = isBullish
+      ? `逢低布局，若回调至¥${support.toFixed(2)}附近可分批建仓，突破¥${resistance.toFixed(2)}加仓，目标¥${takeProfit2.toFixed(2)}。`
+      : `观望等待，若跌破¥${stopLoss.toFixed(2)}止损，反弹至¥${takeProfit1.toFixed(2)}减仓。`;
+    const riskWarning = isBullish
+      ? `警惕高位获利回吐，若成交量无法持续放大，可能面临回调风险。`
+      : `成交量萎缩，警惕变盘。关注政策面及资金面变化。`;
+    
+    // 推导逻辑数据
+    const analysis = {
+      trend: {
+        score: trendScore,
+        reason: `均线系统呈${trendScore >= 60 ? '多头' : '空头'}排列，MACD${trendScore >= 60 ? '金叉' : '死叉'}，短期趋势${trendScore >= 60 ? '向上' : '向下'}。`
+      },
+      position: {
+        score: positionScore,
+        reason: `当前价格位于斐波那契${positionScore >= 60 ? '38.2% 支撑位' : '61.8% 阻力位'}附近，${positionScore >= 60 ? '是较好的建仓位置' : '需等待回调'}。`
+      },
+      momentum: {
+        score: momentumScore,
+        reason: `RSI 指标${momentumScore >= 60 ? '进入超买区 (>70)' : momentumScore < 40 ? '进入超卖区 (<30)' : '位于中性区 (40-70)'}，${momentumScore >= 60 ? '警惕回调' : momentumScore < 40 ? '可能反弹' : '等待方向选择'}。`
+      },
+      volume: {
+        score: volumeScore,
+        reason: `近期成交量${volumeScore >= 60 ? '放大，资金流入明显' : '萎缩，市场观望情绪浓厚'}，${volumeScore >= 60 ? '可跟进' : '等待放量信号'}。`
+      },
+      sentiment: {
+        score: sentimentScore,
+        reason: `综合政策面、资金面、技术面、情绪面分析，${sentimentScore >= 60 ? '市场情绪乐观' : '市场情绪谨慎'}。`,
+        data: {
+          policy: Math.floor(Math.random() * 30 + 50),
+          fund: Math.floor(Math.random() * 30 + 50),
+          tech: quantScore,
+          emotion: Math.floor(Math.random() * 30 + 50)
+        }
+      }
+    };
+    
+    const data: StockData = {
+      symbol,
+      name: stockName,
+      currentPrice: latestPoint.close,
+      change,
+      changePercent,
+      open: latestPoint.open,
+      high: latestPoint.high,
+      low: latestPoint.low,
+      close: latestPoint.close,
+      volume: latestPoint.volume,
+      marketCap: Math.floor(latestPoint.close * 1000000000),
+      kLineData,
+      quantScore,
+      quantSummary,
+      detailedAdvice,
+      support,
+      resistance,
+      stopLoss,
+      takeProfit1,
+      takeProfit2,
+      importance,
+      trendAnalysis,
+      supportPrice: support,
+      resistancePrice: resistance,
+      actionAdvice,
+      riskWarning,
+      analysis
+    };
+    
+    setStockData(data);
+    setIsLoading(false);
+  }, []);
+
+  const clearStock = useCallback(() => {
+    setStockData(null);
+  }, []);
+
+  return (
+    <StockContext.Provider value={{ stockData, isLoading, loadStock, clearStock }}>
+      {children}
+    </StockContext.Provider>
+  );
+}
+
+export function useStock() {
+  const context = useContext(StockContext);
+  if (context === undefined) {
+    throw new Error('useStock must be used within a StockProvider');
+  }
+  return context;
+}
