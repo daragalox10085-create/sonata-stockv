@@ -207,15 +207,6 @@ export default function MonteCarloPrediction({ data, compact }: MonteCarloPredic
           <span className="text-xs text-gray-500">5 日预测</span>
         </div>
         
-        <div className="flex items-center justify-between text-xs mb-1">
-          <span className="text-green-600 font-medium">上涨 {upProbability}%</span>
-          <span className="text-red-600 font-medium">下跌 {downProbability}%</span>
-        </div>
-        <div className="h-2 bg-gray-200 rounded-full overflow-hidden flex mb-3">
-          <div className="h-full bg-green-500" style={{ width: `${upProbability}%` }} />
-          <div className="h-full bg-red-500" style={{ width: `${downProbability}%` }} />
-        </div>
-        
         <div className="grid grid-cols-3 gap-2 text-center">
           {scenarios.map((s) => (
             <div key={s.name} className={`p-2 rounded ${
@@ -261,33 +252,6 @@ export default function MonteCarloPrediction({ data, compact }: MonteCarloPredic
             {showDetails ? '收起' : '详情'}
           </button>
         </div>
-      </div>
-
-      {/* 概率条 - 仿 K 线图样式 */}
-      <div className="mb-6 p-4 bg-gradient-to-r from-green-50 via-white to-red-50 rounded-lg border border-gray-200">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-green-500"></span>
-            <span className="text-sm font-medium text-green-700">上涨 {upProbability}%</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-red-700">下跌 {downProbability}%</span>
-            <span className="w-2 h-2 rounded-full bg-red-500"></span>
-          </div>
-        </div>
-        <div className="h-4 bg-gray-100 rounded-full overflow-hidden flex shadow-inner">
-          <div 
-            className="h-full bg-gradient-to-r from-green-400 to-green-500 transition-all duration-500" 
-            style={{ width: `${upProbability}%` }} 
-          />
-          <div 
-            className="h-full bg-gradient-to-r from-red-400 to-red-500 transition-all duration-500" 
-            style={{ width: `${downProbability}%` }} 
-          />
-        </div>
-        <p className="text-xs text-gray-500 mt-2 text-center">
-          基于 {Math.min(data.kLineData.length, 360)} 天历史数据 · GBM模型
-        </p>
       </div>
 
       {/* 推导过程 */}
@@ -401,11 +365,7 @@ export default function MonteCarloPrediction({ data, compact }: MonteCarloPredic
       <div className="mt-4 p-4 bg-amber-50 rounded-lg border border-amber-200">
         <div className="text-sm font-medium text-amber-800 mb-1">综合建议</div>
         <p className="text-sm text-amber-700">
-          {upProbability > 60 
-            ? `上涨概率${upProbability}%较高，建议积极关注，基准情景目标价¥${scenarios[1].targetPrice.toFixed(0)}` 
-            : upProbability > 40 
-            ? `涨跌概率接近，建议观望等待，基准情景目标价¥${scenarios[1].targetPrice.toFixed(0)}` 
-            : `下跌概率${downProbability}%较高，建议谨慎操作，基准情景目标价¥${scenarios[1].targetPrice.toFixed(0)}`}
+          基于蒙特卡洛模拟结果，基准情景目标价¥{scenarios[1].targetPrice.toFixed(0)}，建议参考三种情景制定交易策略。
         </p>
       </div>
     </div>

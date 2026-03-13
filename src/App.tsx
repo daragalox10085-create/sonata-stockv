@@ -10,14 +10,14 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import StockSearch from './sections/StockSearch';
 import ErrorPage from './sections/ErrorPage';
 import StockHeader from './sections/StockHeader';
-import StockChart from './sections/StockChart';
+import StockChart4H from './sections/StockChart-4H';
 import PositionAnalysis from './sections/PositionAnalysis';
 import StockAnalysis from './sections/StockAnalysis';
 import WeeklyMarketAnalysis from './sections/WeeklyMarketAnalysis';
 import GlossaryPage from './sections/GlossaryPage';
 
 function AppContent() {
-  const { stockData, isLoading, error, errorType, loadStock, clearStock } = useStock();
+  const { stockData, isLoading, error, errorType, loadStock, clearStock, changeTimeframe } = useStock();
   const [showAnalysis, setShowAnalysis] = useState(false);
   const [showError, setShowError] = useState(false);
   const [errorState, setErrorState] = useState<{ type: 'format' | 'invalid' | 'network'; message: string; symbol?: string } | null>(null);
@@ -196,13 +196,16 @@ function AppContent() {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
               <div className="lg:col-span-2">
                 {stockData.kLineData && stockData.kLineData.length > 0 ? (
-                  <StockChart
+                  <StockChart4H
                     data={stockData.kLineData}
                     currentPrice={stockData.currentPrice}
                     stopLoss={stockData.stopLoss}
                     support={stockData.support}
                     resistance={stockData.resistance}
                     isLoading={isLoading}
+                    multiTimeframeData={stockData.kLineDataMulti}
+                    currentTimeframe={stockData.currentTimeframe}
+                    onTimeframeChange={changeTimeframe}
                   />
                 ) : (
                   <div className="w-full h-[400px] bg-gray-50 rounded-lg flex items-center justify-center">

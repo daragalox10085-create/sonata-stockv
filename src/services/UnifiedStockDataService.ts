@@ -335,7 +335,17 @@ export class UnifiedStockDataService {
   // ===== K 线数据 =====
   private async fetchKLineFromEastmoney(symbol: string, days: number): Promise<KLinePoint[] | null> {
     try {
-      const secid = symbol.startsWith('6') ? `1.${symbol}` : `0.${symbol}`;
+      // 修正 secid 格式：6 开头=沪市=1.xxx，0/3/5 开头=深市=0.xxx，ETF 特殊处理
+      let secid: string;
+      if (symbol.startsWith('6')) {
+        secid = `1.${symbol}`; // 沪市
+      } else if (symbol.startsWith('0') || symbol.startsWith('3')) {
+        secid = `0.${symbol}`; // 深市
+      } else if (symbol.startsWith('5')) {
+        secid = `1.${symbol}`; // 沪市 ETF
+      } else {
+        secid = `0.${symbol}`; // 默认深市
+      }
       
       // 计算日期范围
       const endDate = new Date();
@@ -422,6 +432,102 @@ export class UnifiedStockDataService {
       })).filter(k => !isNaN(k.open) && !isNaN(k.close) && k.open > 0);
     } catch (error) {
       console.error('[K 线 - 腾讯] 错误:', error);
+      return null;
+    }
+  }
+
+  // ===== 获取指定周期K线数据 =====
+  async fetchKLineDataByPeriod(
+    symbol: string, 
+    period: '60' | '240' | '101' | '102' = '101',
+    days: number = 90
+  ): Promise<KLinePoint[] | null> {
+    try {
+      // 修正 secid 格式：6 开头=沪市=1.xxx，0/3 开头=深市=0.xxx，5 开头=沪市 ETF=1.xxx
+      let secid: string;
+      if (symbol.startsWith('6')) {
+        secid = `1.${symbol}`; // 沪市
+      } else if (symbol.startsWith('0') || symbol.startsWith('3')) {
+        secid = `0.${symbol}`; // 深市
+      } else if (symbol.startsWith('5')) {
+        secid = `1.${symbol}`; // 沪市 ETF
+      } else {
+        secid = `0.${symbol}`; // 默认深市
+      }
+      
+      // 计算日期范围 - 不同周期需要不同的天数倍数
+      const periodMultiplier: Record<string, number> = {
+        '60': 24,    // 1小时线，每天4条（交易4小时），需要更多天数
+        '240': 6,    // 4小时线，每天1条
+        '101': 1,    // 日线
+        '102': 0.2   // 周线，每周1条
+      };
+      
+      const multiplier = periodMultiplier[period] || 1;
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - Math.ceil(days * multiplier));
+      const beg = startDate.toISOString().slice(0, 10).replace(/-/g, '');
+      const end = endDate.toISOString().slice(0, 10).replace(/-/g, '');
+      
+      const periodNames: Record<string, string> = {
+        '60': '1小时',
+        '240': '4小时',
+        '101': '日线',
+        '102': '周线'
+      };
+      
+      // klt参数：60=1小时, 240=4小时, 101=日线, 102=周线
+      const url = `/api/eastmoney/kline?secid=${secid}&klt=${period}&fqt=1&beg=${beg}&end=${end}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60`;
+      
+      console.log(`[${periodNames[period]}K线 - 东方财富] 请求：${url}`);
+      
+      const response = await fetch(url);
+      console.log(`[${periodNames[period]}K线 - 东方财富] 状态：${response.status}`);
+      
+      if (!response.ok) return null;
+      
+      const json = await response.json();
+      console.log(`[${periodNames[period]}K线 - 东方财富] klines: ${json.data?.klines?.length || 0}条`);
+      
+      const klines = json.data?.klines;
+      if (!klines || !Array.isArray(klines)) return null;
+      
+      return klines.map((item: string) => {
+        const parts = item.split(',');
+        return {
+          date: parts[0],
+          open: parseFloat(parts[1]),
+          close: parseFloat(parts[2]),
+          high: parseFloat(parts[3]),
+          low: parseFloat(parts[4]),
+          volume: parseInt(parts[5]) || 0
+        };
+      }).filter(k => !isNaN(k.open) && !isNaN(k.close) && k.open > 0);
+    } catch (error) {
+      console.error(`[K线 - 东方财富] 错误:`, error);
+      return null;
+    }
+  }
+
+  // ===== 获取多周期K线数据（用于切换） =====
+  async fetchMultiPeriodKLineData(symbol: string, days: number = 365): Promise<{
+    '60': KLinePoint[];
+    '101': KLinePoint[];
+  } | null> {
+    try {
+      // 获取数据：日线一年，小时线90天
+      const [k1h, k1d] = await Promise.all([
+        this.fetchKLineDataByPeriod(symbol, '60', 90),    // 1小时线：90天
+        this.fetchKLineDataByPeriod(symbol, '101', 365)  // 日线：一年
+      ]);
+      
+      return {
+        '60': k1h || [],
+        '101': k1d || []
+      };
+    } catch (error) {
+      console.error('[多周期K线] 获取失败:', error);
       return null;
     }
   }

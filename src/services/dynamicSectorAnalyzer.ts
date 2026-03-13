@@ -169,9 +169,9 @@ export class DynamicSectorAnalyzer {
         timestamp: new Date().toISOString()
       }));
       
-      // 【关键筛选】只保留主力净流入>1000万的板块（与UI显示一致）
-      const capitalInflowSectors = sectors.filter(s => s.mainForceNet > 10_000_000);
-      console.log(`[板块筛选] ${sectors.length}个板块 → ${capitalInflowSectors.length}个资金流入板块(>1000万)`);
+      // 【关键筛选】保留所有板块，但标记资金流入状态（不再过滤，让用户自己筛选）
+      const capitalInflowSectors = sectors.filter(s => s.mainForceNet !== 0); // 只过滤掉无数据的
+      console.log(`[板块筛选] ${sectors.length}个板块 → ${capitalInflowSectors.length}个有数据板块`);
       
       // 计算多维度评分
       let scoredSectors = capitalInflowSectors.map(s => this.calculateSectorScore(s));
@@ -206,10 +206,16 @@ export class DynamicSectorAnalyzer {
   }
   
   private calculateSectorScore(sector: SectorData): DynamicHotSector {
-    // 动量维度（涨跌幅 + RSI）
+    // 动量维度（涨跌幅 + RSI）- 标准化处理，统一量纲
+    // 涨跌幅标准化：假设涨跌幅范围 -10% ~ +10%，映射到 0-100分
+    const changePercentScore = Math.min(100, Math.max(0, 
+      50 + sector.changePercent * 5  // -10%->0分, 0%->50分, +10%->100分
+    ));
+    // RSI标准化：已经是0-100范围，直接归一化到50为基准
+    const rsiScore = Math.min(100, Math.max(0, sector.rsi));
+    // 动量综合得分：涨跌幅60% + RSI40%
     const momentumScore = Math.min(100, Math.max(0, 
-      (sector.changePercent > 0 ? 50 + sector.changePercent * 2 : 50 + sector.changePercent) +
-      (sector.rsi - 50)
+      changePercentScore * 0.6 + rsiScore * 0.4
     ));
     
     // 资金维度（主力净流入/市值）

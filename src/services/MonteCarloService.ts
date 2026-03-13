@@ -220,8 +220,8 @@ export class MonteCarloAnalyzer {
     const upProbability = Math.round((upCount / n) * 100);
     
     // 4. 基于模拟结果的标准差计算动态阈值
-    // 使用0.5倍标准差作为阈值，确保有合理的分布
-    const zScore = 0.5;
+    // 使用1.0倍标准差作为阈值，确保情景区间有足够区分度
+    const zScore = 1.0;
     const optimisticThreshold = currentPrice + std * zScore;
     const pessimisticThreshold = currentPrice - std * zScore;
     

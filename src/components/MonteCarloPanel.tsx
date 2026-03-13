@@ -5,7 +5,7 @@
 
 import React, { useState } from 'react';
 import { useMonteCarlo } from '../hooks/useAnalysis';
-import { Activity, RefreshCw, AlertCircle, TrendingUp, TrendingDown } from 'lucide-react';
+import { Activity, RefreshCw, AlertCircle } from 'lucide-react';
 
 interface MonteCarloPanelProps {
   stockCode: string;
@@ -77,26 +77,6 @@ export const MonteCarloPanel: React.FC<MonteCarloPanelProps> = ({ stockCode }) =
         <div className="text-center p-4 bg-gray-50 rounded-lg">
           <div className="text-sm text-gray-500 mb-1">{stock.name} ({stock.code})</div>
           <div className="text-3xl font-bold text-blue-600">¥{stock.currentPrice}</div>
-        </div>
-
-        {/* 概率条 */}
-        <div>
-          <div className="flex justify-between text-sm mb-2">
-            <span className="text-green-600 font-semibold flex items-center">
-              <TrendingUp className="w-4 h-4 mr-1" />
-              上涨 {monteCarlo.upProbability}%
-            </span>
-            <span className="text-red-600 font-semibold flex items-center">
-              <TrendingDown className="w-4 h-4 mr-1" />
-              下跌 {monteCarlo.downProbability}%
-            </span>
-          </div>
-          <div className="w-full bg-gray-200 rounded-full h-4 overflow-hidden">
-            <div 
-              className="bg-gradient-to-r from-green-500 to-green-400 h-full transition-all duration-1000"
-              style={{ width: `${monteCarlo.upProbability}%` }}
-            />
-          </div>
         </div>
 
         {/* 三种情景 */}

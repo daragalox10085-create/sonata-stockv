@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { dynamicAnalysisService, StockRecommendation, HotSector, MonteCarloResult } from '../services/dynamicAnalysisService';
+import { sectorService } from '../services/SectorService';
+import { screeningService } from '../services/ScreeningService';
 import { useStock } from '../contexts/StockContext';
 import { AlertCircle, Info } from 'lucide-react';
 
@@ -24,86 +26,82 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
   // 从StockContext获取真实K线数据
   const { stockData } = useStock();
   
-  // 根据资金流入筛选热门板块
-  const filteredSectors = hotSectors.filter(sector => {
-    if (capitalFilter === 'all') return true;
-    if (capitalFilter === 'inflow') return sector.dimensions.capital >= 70;
-    if (capitalFilter === 'outflow') return sector.dimensions.capital < 70;
-    return true;
-  }).filter(sector => {
-    // 资金流入金额筛选（如果有metrics数据）
-    if (minCapitalInflow > 0 && sector.metrics?.mainForceNet) {
-      return sector.metrics.mainForceNet >= minCapitalInflow * 10000;
-    }
-    return true;
-  });
-  
-  // 根据筛选后的板块重新计算精选股票
-  useEffect(() => {
-    if (showStockPicker && filteredSectors.length > 0) {
-      // 从筛选后的板块收集股票代码
-      const allStockCodes: string[] = [];
-      filteredSectors.forEach(sector => {
-        if (sector.topStocks && sector.topStocks.length > 0) {
-          const codes = sector.topStocks.map((stock) => stock.code);
-          allStockCodes.push(...codes);
-        }
-      });
+  // 根据资金流入筛选热门板块 - 使用useMemo避免重复计算
+  const filteredSectors = useMemo(() => {
+    return hotSectors.filter(sector => {
+      // 获取主力净流入金额（万元）
+      const mainForceNet = sector.metrics?.mainForceNet || 0;
       
-      // 使用备用数据生成精选股票
-      const fallbackStocks: StockRecommendation[] = [];
-      const seenCodes = new Set<string>();
-      
-      for (const sector of filteredSectors) {
-        if (sector.topStocks && sector.topStocks.length > 0) {
-          for (const stock of sector.topStocks.slice(0, 2)) {
-            if (!seenCodes.has(stock.code)) {
-              seenCodes.add(stock.code);
-              fallbackStocks.push({
-                code: stock.code,
-                name: stock.name,
-                score: Math.round(sector.score * 0.8 + Math.random() * 10),
-                confidence: 70,
-                factors: {
-                  valuation: 65,
-                  growth: 70,
-                  scale: 75,
-                  momentum: Math.round(stock.changePercent * 10 + 50),
-                  quality: 68,
-                  support: 60
-                },
-                metrics: {
-                  pe: 25 + Math.random() * 20,
-                  peg: 1.0 + Math.random() * 0.5,
-                  pb: 2 + Math.random() * 2,
-                  roe: 10 + Math.random() * 10,
-                  profitGrowth: 15 + Math.random() * 20,
-                  marketCap: 50000000000 + Math.random() * 200000000000,
-                  currentPrice: 50 + Math.random() * 100,
-                  support: 45 + Math.random() * 80,
-                  resistance: 60 + Math.random() * 120,
-                  distanceToSupport: Math.round((Math.random() * 20 - 5) * 10) / 10,
-                  upwardSpace: Math.round((10 + Math.random() * 20) * 10) / 10
-                },
-                recommendation: sector.score >= 80 ? '强烈推荐' : sector.score >= 70 ? '推荐' : '谨慎推荐',
-                analysis: `${stock.name}属于${sector.name}板块，${sector.trend}，具备较好的投资价值。`,
-                sectorInfo: {
-                  sectorCode: sector.code,
-                  sectorName: sector.name,
-                  sectorScore: sector.score
-                }
-              });
-            }
-            if (fallbackStocks.length >= 5) break;
-          }
-        }
-        if (fallbackStocks.length >= 5) break;
+      if (capitalFilter === 'all') return true;
+      if (capitalFilter === 'inflow') return mainForceNet > 0; // 净流入为正表示资金流入
+      if (capitalFilter === 'outflow') return mainForceNet <= 0; // 净流入为负或零表示资金流出
+      return true;
+    }).filter(sector => {
+      // 资金流入金额筛选（仅当选择"资金流入"时生效）
+      if (capitalFilter === 'inflow' && minCapitalInflow > 0 && sector.metrics?.mainForceNet) {
+        return sector.metrics.mainForceNet >= minCapitalInflow * 10000;
       }
-      
-      setRecommendations(fallbackStocks);
+      // 资金流出时不做金额筛选（因为流出是负数）
+      return true;
+    });
+  }, [hotSectors, capitalFilter, minCapitalInflow]);
+  
+  // 根据筛选后的板块动态计算精选股票 - 使用useMemo
+  const filteredRecommendations = useMemo(() => {
+    if (!showStockPicker || filteredSectors.length === 0) return [];
+    
+    const fallbackStocks: StockRecommendation[] = [];
+    const seenCodes = new Set<string>();
+    
+    for (const sector of filteredSectors) {
+      if (sector.topStocks && sector.topStocks.length > 0) {
+        for (const stock of sector.topStocks.slice(0, 2)) {
+          if (!seenCodes.has(stock.code)) {
+            seenCodes.add(stock.code);
+            fallbackStocks.push({
+              code: stock.code,
+              name: stock.name,
+              score: Math.round(sector.score * 0.8 + Math.random() * 10),
+              confidence: 70,
+              factors: {
+                valuation: 65,
+                growth: 70,
+                scale: 75,
+                momentum: Math.round(stock.changePercent * 10 + 50),
+                quality: 68,
+                support: 60
+              },
+              metrics: {
+                pe: 25 + Math.random() * 20,
+                peg: 1.0 + Math.random() * 0.5,
+                pb: 2 + Math.random() * 2,
+                roe: 10 + Math.random() * 10,
+                profitGrowth: 15 + Math.random() * 20,
+                marketCap: 50000000000 + Math.random() * 200000000000,
+                currentPrice: 50 + Math.random() * 100,
+                support: 45 + Math.random() * 80,
+                resistance: 60 + Math.random() * 120,
+                distanceToSupport: Math.round((Math.random() * 20 - 5) * 10) / 10,
+                upwardSpace: Math.round((10 + Math.random() * 20) * 10) / 10
+              },
+              recommendation: sector.score >= 80 ? '强烈推荐' : sector.score >= 70 ? '推荐' : '谨慎推荐',
+              analysis: `${stock.name}属于${sector.name}板块，${sector.trend}，具备较好的投资价值。`,
+              sectorInfo: {
+                sectorCode: sector.code,
+                sectorName: sector.name,
+                sectorScore: sector.score
+              }
+            });
+          }
+          if (fallbackStocks.length >= 5) break;
+        }
+      }
+      if (fallbackStocks.length >= 5) break;
     }
+    
+    return fallbackStocks.slice(0, 5);
   }, [filteredSectors, showStockPicker]);
-
+  
   useEffect(() => {
     loadData();
   }, []);
@@ -115,32 +113,58 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
       // 加载热门板块和精选股票池（仅当 showStockPicker=true 时）
       if (showStockPicker) {
         try {
-          // 获取热门板块
-          const sectors = await dynamicAnalysisService.getHotSectors();
-          setHotSectors(sectors);
+          // 使用新的SectorService获取热门板块
+          console.log('[WeeklyMarketAnalysis] 开始加载热门板块...');
+          const sectors = await sectorService.getHotSectors();
+          console.log(`[WeeklyMarketAnalysis] 获取到 ${sectors.length} 个热门板块`);
+          setHotSectors(sectors as any);
 
-          // 从热门板块收集所有股票代码
-          const allStockCodes: string[] = [];
-          sectors.forEach(sector => {
-            if (sector.topStocks && sector.topStocks.length > 0) {
-              // topStocks 是对象数组 {code, name, changePercent}
-              const codes = sector.topStocks.map((stock) => stock.code);
-              allStockCodes.push(...codes);
+          // 使用新的ScreeningService获取精选股票
+          console.log('[WeeklyMarketAnalysis] 开始精选股票...');
+          const screenedStocks = await screeningService.screenStocks();
+          console.log(`[WeeklyMarketAnalysis] 精选股票: ${screenedStocks.length} 只`);
+          
+          // 转换为组件需要的格式
+          const recommendations: StockRecommendation[] = screenedStocks.map(stock => ({
+            code: stock.code,
+            name: stock.name,
+            score: stock.compositeScore,
+            confidence: stock.recommendationLevel === '强烈推荐' ? 85 : 
+                       stock.recommendationLevel === '推荐' ? 70 : 55,
+            factors: stock.factorBreakdown,
+            metrics: {
+              pe: 25,
+              peg: 1.2,
+              pb: 2.5,
+              roe: 15,
+              profitGrowth: 20,
+              marketCap: 100000000000,
+              currentPrice: 0,
+              support: 0,
+              resistance: 0,
+              distanceToSupport: stock.distanceToSupport,
+              upwardSpace: stock.upsidePotential
+            },
+            recommendation: stock.recommendationLevel,
+            analysis: stock.recommendationText,
+            sectorInfo: {
+              sectorCode: '',
+              sectorName: stock.sector,
+              sectorScore: stock.compositeScore
             }
-          });
+          }));
           
-          console.log('分析股票池:', allStockCodes);
+          setRecommendations(recommendations);
           
-          // 从API获取这些股票的数据，筛选出支撑位附近的
-          let stocks: StockRecommendation[] = [];
-          if (allStockCodes.length > 0) {
-            stocks = await dynamicAnalysisService.getStockRecommendations(allStockCodes);
-            console.log('API选股结果:', stocks.length, '只');
+          // 如果新服务返回空，回退到旧服务
+          if (sectors.length === 0) {
+            console.log('[WeeklyMarketAnalysis] 新服务返回空，使用旧服务');
+            const oldSectors = await dynamicAnalysisService.getHotSectors();
+            setHotSectors(oldSectors);
           }
           
-          // 如果API返回空，使用备用数据中的热门股票
-          if (stocks.length === 0) {
-            console.log('[选股] API返回空，使用备用热门股票');
+          if (screenedStocks.length === 0) {
+            console.log('[WeeklyMarketAnalysis] 精选股票为空，使用备用数据');
             // 从热门板块中提取前5只股票作为推荐
             const fallbackStocks: StockRecommendation[] = [];
             const seenCodes = new Set<string>();
@@ -191,10 +215,8 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
               if (fallbackStocks.length >= 5) break;
             }
             
-            stocks = fallbackStocks;
+            setRecommendations(fallbackStocks.slice(0, 5));
           }
-          
-          setRecommendations(stocks.slice(0, 5));
         } catch (error) {
           console.error('加载数据失败:', error);
           setError('数据加载失败，请稍后重试');
@@ -279,30 +301,6 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
               <Info size={14} />
               {showDerivation ? '隐藏推导' : '推导详情'}
             </button>
-          </div>
-
-          {/* 概率条 */}
-          <div className="mb-4 p-4 bg-gradient-to-r from-green-50 via-white to-red-50 rounded-lg border border-gray-200">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-green-500"></span>
-                <span className="text-sm font-medium text-green-700">上涨 {monteCarloResult.upProbability}%</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-red-700">下跌 {monteCarloResult.downProbability}%</span>
-                <span className="w-2 h-2 rounded-full bg-red-500"></span>
-              </div>
-            </div>
-            <div className="h-4 bg-gray-100 rounded-full overflow-hidden flex shadow-inner">
-              <div 
-                className="h-full bg-gradient-to-r from-green-400 to-green-500 transition-all duration-500" 
-                style={{ width: `${monteCarloResult.upProbability}%` }} 
-              />
-              <div 
-                className="h-full bg-gradient-to-r from-red-400 to-red-500 transition-all duration-500" 
-                style={{ width: `${monteCarloResult.downProbability}%` }} 
-              />
-            </div>
           </div>
 
           {/* 三种情景 */}
@@ -431,8 +429,8 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-gray-500">资金流向</span>
-                  <span className={`font-semibold ${sector.dimensions.capital >= 70 ? 'text-red-600' : 'text-green-600'}`}>
-                    {sector.dimensions.capital >= 70 ? '▲ 流入' : '▼ 流出'}
+                  <span className={`font-semibold ${(sector.metrics?.mainForceNet || 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                    {(sector.metrics?.mainForceNet || 0) > 0 ? '▲ 流入' : '▼ 流出'}
                   </span>
                 </div>
                 {sector.metrics?.mainForceNet ? (
@@ -506,7 +504,7 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
           </div>
         )}
         
-        {recommendations.length === 0 ? (
+        {filteredRecommendations.length === 0 ? (
           <p className="text-gray-500 text-center py-8">暂无符合筛选条件的股票</p>
         ) : (
           <div className="overflow-x-auto">
@@ -522,7 +520,7 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {recommendations.map((stock) => (
+                {filteredRecommendations.map((stock) => (
                   <tr key={stock.code} className="hover:bg-slate-50 transition-colors">
                     <td className="px-4 py-3 font-mono text-gray-600">{stock.code}</td>
                     <td className="px-4 py-3 font-medium text-gray-900">{stock.name}</td>

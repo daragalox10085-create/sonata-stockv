@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import * as echarts from 'echarts';
-import { KLinePoint } from '../contexts/StockContext';
+import { KLinePoint, KLineTimeframe } from '../contexts/StockContext';
 
 interface StockChart4HProps {
   data: KLinePoint[];
@@ -15,6 +15,15 @@ interface StockChart4HProps {
   onRetry?: () => void;
   dataSource?: string;
   updateTime?: string;
+  // 多周期切换相关
+  multiTimeframeData?: {
+    '60': KLinePoint[];
+    '240': KLinePoint[];
+    '101': KLinePoint[];
+    '102': KLinePoint[];
+  };
+  currentTimeframe?: KLineTimeframe;
+  onTimeframeChange?: (timeframe: KLineTimeframe) => void;
 }
 
 export default function StockChart4H({ 
@@ -27,7 +36,10 @@ export default function StockChart4H({
   error = null,
   onRetry,
   dataSource,
-  updateTime
+  updateTime,
+  multiTimeframeData,
+  currentTimeframe = '240',
+  onTimeframeChange
 }: StockChart4HProps) {
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<echarts.ECharts | null>(null);
@@ -52,22 +64,45 @@ export default function StockChart4H({
       devicePixelRatio: window.devicePixelRatio || 1
     });
 
+    // 使用当前选中的周期数据
+    const chartData = displayData.length > 0 ? displayData : data;
+    
     // 准备数据
-    const dates = data.map(item => item.date.substring(5)); // 只显示 MM-DD
-    const kLineData = data.map(item => [
+    const dates = chartData.map(item => {
+      // 根据周期格式化日期显示
+      if (currentTimeframe === '60' || currentTimeframe === '240') {
+        // 小时线显示 MM-DD HH:mm
+        return item.date.substring(5, 16); // 显示 "03-13 14:30"
+      }
+      return item.date.substring(5); // 日线/周线显示 MM-DD
+    });
+    const kLineData = chartData.map(item => [
       item.open,
       item.close,
       item.low,
       item.high
     ]);
 
-    // 计算均线
-    const ma5 = calculateMA(data, 5);
-    const ma10 = calculateMA(data, 10);
-    const ma20 = calculateMA(data, 20);
+    // 计算均线（根据周期调整）
+    const maPeriod = 5; // 统一用5
+    const ma5 = calculateMA(chartData, maPeriod);
+    const ma10 = calculateMA(chartData, maPeriod * 2);
+    const ma20 = calculateMA(chartData, maPeriod * 4);
 
-    // 计算斐波那契回调位（基于过去 20 日或 360 天的真实高低点）
-    const fibLevels = calculateFibonacciLevels(data, 360);
+    // 动态计算支撑位、压力位、止损位
+    const lookbackPeriod = Math.min(60, chartData.length); // 看最近60根K线
+    const recentData = chartData.slice(-lookbackPeriod);
+    
+    // 支撑位 = 最近N根K线的最低点 - 0.5 * ATR
+    const recentLow = Math.min(...recentData.map(k => k.low));
+    const recentHigh = Math.max(...recentData.map(k => k.high));
+    const atr = calculateATR(recentData, 14);
+    const dynamicSupport = recentLow - 0.5 * atr;
+    const dynamicResistance = recentHigh + 0.5 * atr;
+    const dynamicStopLoss = dynamicSupport - atr;
+    
+    // 计算斐波那契回调位（基于最近的高低点）
+    const fibLevels = calculateFibonacciLevelsDynamic(recentHigh, recentLow);
 
     // 构建标注线数据
     const markLineData: any[] = [];
@@ -82,71 +117,75 @@ export default function StockChart4H({
         type: 'solid'
       },
       label: {
-        formatter: '现价 ¥{c}',
+        formatter: (params: any) => {
+          return `现价¥${Number(params.value).toFixed(1)}`;
+        },
         position: 'end',
         color: '#1E40AF',
         fontWeight: 'bold',
-        fontSize: 12
+        fontSize: 11
       }
     });
 
     // 止损位 - 红色（警示色）
     markLineData.push({
       name: '止损位',
-      yAxis: stopLoss,
+      yAxis: dynamicStopLoss,
       lineStyle: {
         color: '#DC2626',
         width: 2,
         type: 'dashed'
       },
       label: {
-        formatter: '止损 ¥{c}',
+        formatter: (params: any) => {
+          return `止损¥${Number(params.value).toFixed(1)}`;
+        },
         position: 'end',
         color: '#DC2626',
         fontWeight: 'bold',
-        fontSize: 12
+        fontSize: 11
       }
     });
 
     // 支撑位 - 灰色（中性色）
-    if (support) {
-      markLineData.push({
-        name: '支撑位',
-        yAxis: support,
-        lineStyle: {
-          color: '#6B7280',
-          width: 2,
-          type: 'dotted'
+    markLineData.push({
+      name: '支撑位',
+      yAxis: dynamicSupport,
+      lineStyle: {
+        color: '#6B7280',
+        width: 2,
+        type: 'dotted'
+      },
+      label: {
+        formatter: (params: any) => {
+          return `支撑¥${Number(params.value).toFixed(1)}`;
         },
-        label: {
-          formatter: '支撑 ¥{c}',
-          position: 'end',
-          color: '#6B7280',
-          fontWeight: 'bold',
-          fontSize: 12
-        }
-      });
-    }
+        position: 'end',
+        color: '#6B7280',
+        fontWeight: 'bold',
+        fontSize: 11
+      }
+    });
 
     // 压力位 - 灰色（中性色）
-    if (resistance) {
-      markLineData.push({
-        name: '压力位',
-        yAxis: resistance,
-        lineStyle: {
-          color: '#6B7280',
-          width: 2,
-          type: 'dotted'
+    markLineData.push({
+      name: '压力位',
+      yAxis: dynamicResistance,
+      lineStyle: {
+        color: '#6B7280',
+        width: 2,
+        type: 'dotted'
+      },
+      label: {
+        formatter: (params: any) => {
+          return `压力¥${Number(params.value).toFixed(1)}`;
         },
-        label: {
-          formatter: '压力 ¥{c}',
-          position: 'end',
-          color: '#6B7280',
-          fontWeight: 'bold',
-          fontSize: 12
-        }
-      });
-    }
+        position: 'end',
+        color: '#6B7280',
+        fontWeight: 'bold',
+        fontSize: 11
+      }
+    });
 
     // 斐波那契支撑/压力位 - 紫色系
     const fibColors = ['#9333EA', '#7C3AED', '#6D28D9', '#5B21B6'];
@@ -161,7 +200,9 @@ export default function StockChart4H({
           type: 'dotted'
         },
         label: {
-          formatter: `${fibNames[index]} ¥{c}`,
+          formatter: (params: any) => {
+            return `${fibNames[index]} ¥${Number(params.value).toFixed(1)}`;
+          },
           position: 'end',
           color: fibColors[index],
           fontSize: 10
@@ -181,7 +222,7 @@ export default function StockChart4H({
       },
       grid: {
         left: '3%',
-        right: '8%',
+        right: '15%',
         top: '10%',
         bottom: '15%'
       },
@@ -466,14 +507,46 @@ export default function StockChart4H({
     </div>
   );
 
+  // 周期配置（东方财富支持的周期）
+  const timeframeConfig: { value: KLineTimeframe; label: string }[] = [
+    { value: '60', label: '1小时' },
+    { value: '101', label: '日线' }
+  ];
+
+  // 获取当前显示的数据
+  const displayData = multiTimeframeData?.[currentTimeframe] || data;
+  
+  // 获取当前周期名称
+  const currentTimeframeLabel = timeframeConfig.find(t => t.value === currentTimeframe)?.label || '4小时';
+
   return (
     <div className="glass-card rounded p-6 mb-6 animate-slide-in">
       {/* 标题和 Badge */}
       <div className="flex flex-wrap items-center justify-between mb-4 gap-2">
-        <h2 className="text-lg font-bold text-gray-800">📊 K 线图</h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-bold text-gray-800">📊 K 线图</h2>
+          
+          {/* 周期切换按钮组 */}
+          <div className="flex bg-gray-100 rounded-lg p-1">
+            {timeframeConfig.map((tf) => (
+              <button
+                key={tf.value}
+                onClick={() => onTimeframeChange?.(tf.value)}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
+                  currentTimeframe === tf.value
+                    ? 'bg-blue-500 text-white shadow-sm'
+                    : 'text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {tf.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        
         <div className="flex gap-2 flex-wrap items-center">
           <span className="px-3 py-1 bg-blue-100 text-blue-700 text-xs font-medium rounded">
-            4 小时 K 线图
+            {currentTimeframeLabel} K 线图
           </span>
           <span className="px-3 py-1 bg-yellow-100 text-yellow-700 text-xs font-medium rounded flex items-center gap-1">
             🔄 延迟约 15 分钟
@@ -546,49 +619,59 @@ export default function StockChart4H({
         </div>
       )}
 
-      {/* 关键价位标注 */}
+      {/* 关键价位标注 - 使用动态计算的值 */}
       {!error && data.length > 0 && (
-        <div className="mt-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-          <div className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-200 rounded">
-            <span className="text-base">💜</span>
-            <div>
-              <div className="text-xs text-text-tertiary">现价</div>
-              <div className="text-sm font-bold text-primary">¥{currentPrice.toFixed(2)}</div>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 p-2 bg-red-50 border border-red-200 rounded">
-            <span className="text-base">🔴</span>
-            <div>
-              <div className="text-xs text-text-tertiary">止损位</div>
-              <div className="text-sm font-bold text-danger">¥{stopLoss.toFixed(2)}</div>
-            </div>
-          </div>
-          {support && (
-            <div className="flex items-center gap-2 p-2 bg-bg-surface border border-border-light rounded">
-              <span className="text-base">🟣</span>
-              <div>
-                <div className="text-xs text-text-tertiary">支撑位</div>
-                <div className="text-sm font-bold text-text-secondary">¥{support.toFixed(2)}</div>
+        (() => {
+          // 动态计算关键价位
+          const lookbackPeriod = Math.min(60, data.length);
+          const recentData = data.slice(-lookbackPeriod);
+          const recentLow = Math.min(...recentData.map(k => k.low));
+          const recentHigh = Math.max(...recentData.map(k => k.high));
+          const atr = calculateATR(recentData, 14);
+          const dynamicSupport = recentLow - 0.5 * atr;
+          const dynamicResistance = recentHigh + 0.5 * atr;
+          const dynamicStopLoss = dynamicSupport - atr;
+          
+          return (
+            <div className="mt-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+              <div className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-200 rounded">
+                <span className="text-base">💜</span>
+                <div>
+                  <div className="text-xs text-text-tertiary">现价</div>
+                  <div className="text-sm font-bold text-primary">¥{currentPrice.toFixed(1)}</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 p-2 bg-red-50 border border-red-200 rounded">
+                <span className="text-base">🔴</span>
+                <div>
+                  <div className="text-xs text-text-tertiary">止损位</div>
+                  <div className="text-sm font-bold text-danger">¥{dynamicStopLoss.toFixed(1)}</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 p-2 bg-bg-surface border border-border-light rounded">
+                <span className="text-base">🟣</span>
+                <div>
+                  <div className="text-xs text-text-tertiary">支撑位</div>
+                  <div className="text-sm font-bold text-text-secondary">¥{dynamicSupport.toFixed(1)}</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 p-2 bg-bg-surface border border-border-light rounded">
+                <span className="text-base">🟠</span>
+                <div>
+                  <div className="text-xs text-text-tertiary">压力位</div>
+                  <div className="text-sm font-bold text-text-secondary">¥{dynamicResistance.toFixed(1)}</div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 p-2 bg-purple-50 border border-purple-200 rounded">
+                <span className="text-base">📐</span>
+                <div>
+                  <div className="text-xs text-text-tertiary">斐波那契</div>
+                  <div className="text-sm font-bold text-purple-700">23.6% - 61.8%</div>
+                </div>
               </div>
             </div>
-          )}
-          {resistance && (
-            <div className="flex items-center gap-2 p-2 bg-bg-surface border border-border-light rounded">
-              <span className="text-base">🟠</span>
-              <div>
-                <div className="text-xs text-text-tertiary">压力位</div>
-                <div className="text-sm font-bold text-text-secondary">¥{resistance.toFixed(2)}</div>
-              </div>
-            </div>
-          )}
-          <div className="flex items-center gap-2 p-2 bg-purple-50 border border-purple-200 rounded">
-            <span className="text-base">📐</span>
-            <div>
-              <div className="text-xs text-text-tertiary">斐波那契</div>
-              <div className="text-sm font-bold text-purple-700">23.6% - 61.8%</div>
-            </div>
-          </div>
-        </div>
+          );
+        })()
       )}
     </div>
   );
@@ -611,34 +694,38 @@ function calculateMA(data: KLinePoint[], days: number): (number | '-')[] {
   return result;
 }
 
-// 计算斐波那契回调位（基于过去 N 天的真实高低点）
-function calculateFibonacciLevels(data: KLinePoint[], days: number = 360): number[] {
-  if (data.length === 0) return [];
+// 计算ATR（平均真实波幅）
+function calculateATR(data: KLinePoint[], period: number = 14): number {
+  if (data.length < 2) return 0;
   
-  // 限制时间范围：使用过去 N 天的数据（或全部数据如果不足 N 天）
-  const lookbackCount = Math.min(days, data.length);
-  const recentData = data.slice(-lookbackCount);
+  const trValues: number[] = [];
   
-  // 找到最高价和最低价
-  let highest = -Infinity;
-  let lowest = Infinity;
-  
-  recentData.forEach(point => {
-    if (point.high > highest) highest = point.high;
-    if (point.low < lowest) lowest = point.low;
-  });
-  
-  // 数值验证：防止最高价等于最低价（除以 0 或无效计算）
-  if (highest === lowest || !isFinite(highest) || !isFinite(lowest)) {
-    // 如果价格没有波动，返回当前价格作为所有斐波那契位
-    const currentPrice = recentData[recentData.length - 1]?.close || 0;
-    return [currentPrice, currentPrice, currentPrice, currentPrice];
+  for (let i = 1; i < data.length; i++) {
+    const high = data[i].high;
+    const low = data[i].low;
+    const prevClose = data[i - 1].close;
+    
+    const tr = Math.max(
+      high - low,
+      Math.abs(high - prevClose),
+      Math.abs(low - prevClose)
+    );
+    trValues.push(tr);
   }
   
-  const range = highest - lowest;
+  // 计算简单移动平均
+  const lookback = Math.min(period, trValues.length);
+  const sum = trValues.slice(-lookback).reduce((a, b) => a + b, 0);
+  return sum / lookback;
+}
+
+// 动态计算斐波那契回调位（基于最近的高低点）
+function calculateFibonacciLevelsDynamic(high: number, low: number): number[] {
+  if (!isFinite(high) || !isFinite(low) || high === low) {
+    return [low, low, low, low];
+  }
   
-  // 计算斐波那契回调位：从高点往下回调（下跌趋势）
-  // 公式：斐波那契位 = 最高价 - (最高价 - 最低价) × 斐波那契比例
+  const range = high - low;
   const fibRatios = [0.236, 0.382, 0.5, 0.618];
-  return fibRatios.map(ratio => highest - range * ratio);
+  return fibRatios.map(ratio => high - range * ratio);
 }

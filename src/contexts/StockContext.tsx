@@ -56,11 +56,10 @@ export interface KLinePoint {
 }
 
 // K 线时间周期枚举
-export type KLineTimeframe = '60' | '240' | '101';
+export type KLineTimeframe = '60' | '101';
 
 export interface KLineData {
   '60': KLinePoint[];
-  '240': KLinePoint[];
   '101': KLinePoint[];
 }
 
@@ -752,8 +751,12 @@ export function StockProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       
-      // 使用统一数据服务获取K线数据（2级冗余）- 获取一年数据（240个交易日）
-      const kLineData = await unifiedStockDataService.fetchKLineData(symbol, 240);
+      // 使用统一数据服务获取多周期K线数据（一年数据）
+      const multiKLineData = await unifiedStockDataService.fetchMultiPeriodKLineData(symbol, 365);
+      
+      // 默认使用日线
+      const defaultTimeframe: KLineTimeframe = '101';
+      const kLineData = multiKLineData?.[defaultTimeframe] || [];
       
       // 构建StockData对象
       const stockDataBase: Partial<StockData> = {
@@ -768,9 +771,11 @@ export function StockProvider({ children }: { children: React.ReactNode }) {
         close: quote.currentPrice - quote.change,
         volume: quote.volume,
         marketCap: quote.marketCap,
-        kLineData: kLineData || [],
+        kLineData: kLineData,
+        kLineDataMulti: multiKLineData || { '60': [], '101': [] },
+        currentTimeframe: defaultTimeframe,
         dataSource: quote.source,
-        dataQuality: kLineData && kLineData.length >= 120 ? 'real' : 'fallback',
+        dataQuality: kLineData && kLineData.length >= 30 ? 'real' : 'fallback',
         updateTime: new Date().toLocaleString('zh-CN')
       };
       
