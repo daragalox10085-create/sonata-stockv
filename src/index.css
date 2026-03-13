@@ -36,6 +36,10 @@ body {
   -moz-osx-font-smoothing: grayscale;
   color: var(--text-primary);
   background: var(--bg-primary);
+  /* 确保页面以100%比例显示 */
+  zoom: 1;
+  transform: scale(1);
+  transform-origin: top left;
 }
 
 /* Flat background - no gradient */
