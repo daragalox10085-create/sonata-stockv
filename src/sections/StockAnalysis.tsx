@@ -66,7 +66,7 @@ const StockAnalysis: React.FC<StockAnalysisProps> = ({ stockData }) => {
       >
         <div className="flex items-center gap-2 mb-2">
           <span className="px-3 py-1 bg-white bg-opacity-20 rounded text-sm font-medium">
-            {recommendation || '观望'}
+            评级：{recommendation || '观望'}
           </span>
           <span className="text-sm">量化建议</span>
         </div>

@@ -21,7 +21,7 @@ const stockNameMap: Record<string, string> = {
 };
 
 export function getStockName(code: string): string {
-  return stockNameMap[code] || code;
+  return stockNameMap[code] || '';
 }
 
 export function searchStockByName(name: string): string[] {

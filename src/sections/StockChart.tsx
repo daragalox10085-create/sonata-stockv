@@ -28,8 +28,8 @@ export default function StockChart({
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<echarts.ECharts | null>(null);
   
-  // 保存缩放状态
-  const [zoomState, setZoomState] = useState({ start: 50, end: 100 });
+  // 保存缩放状态 - 默认显示全部数据（一年）
+  const [zoomState, setZoomState] = useState({ start: 0, end: 100 });
   
   // 双层级支撑位（基于ATR）
   const [support1, setSupport1] = useState(support || 0);

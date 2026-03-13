@@ -58,7 +58,7 @@ export default function StockHeader({ data }: StockHeaderProps) {
               data.importance === 'medium' ? 'bg-amber-100 text-amber-700' :
               'bg-blue-100 text-blue-700'
             }`}>
-              {data.importance === 'high' ? '强烈' : data.importance === 'medium' ? '中等' : '一般'}
+              评级：{data.importance === 'high' ? '强烈' : data.importance === 'medium' ? '中等' : '一般'}
             </span>
             <span className="text-xs text-slate-600 font-medium">量化建议</span>
           </div>
@@ -68,7 +68,7 @@ export default function StockHeader({ data }: StockHeaderProps) {
             data.recommendation?.includes('卖出') ? 'text-red-600' :
             'text-slate-600'
           }`}>
-            {data.recommendation || '观望'}
+            评级：{data.recommendation || '观望'}
           </span>
         </div>
         
@@ -114,7 +114,16 @@ export default function StockHeader({ data }: StockHeaderProps) {
         </div>
         <div className="text-center p-2 md:p-3 bg-gray-50 rounded-lg border border-gray-100">
           <div className="text-[10px] md:text-xs text-gray-500 mb-1">💰 市值</div>
-          <div className="text-xs md:text-sm font-semibold text-gray-900">{(marketCap / 100000000).toFixed(1)}亿</div>
+          <div className="text-xs md:text-sm font-semibold text-gray-900">
+            {marketCap > 100000000 
+              ? `${(marketCap / 100000000).toFixed(1)}亿`
+              : marketCap > 10000 
+                ? `${(marketCap / 10000).toFixed(0)}万`
+                : marketCap > 0 
+                  ? `${marketCap.toFixed(0)}`
+                  : '-'
+            }
+          </div>
         </div>
         <div className="text-center p-2 md:p-3 bg-gray-50 rounded-lg border border-gray-100">
           <div className="text-[10px] md:text-xs text-gray-500 mb-1">📊 昨收</div>

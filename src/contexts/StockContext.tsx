@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 import { getStockName } from '../services/stockNameService';
+import { unifiedStockDataService } from '../services/UnifiedStockDataService';
 
 export interface StockData {
   symbol: string;
@@ -742,35 +743,41 @@ export function StockProvider({ children }: { children: React.ReactNode }) {
     }
     
     try {
-      let realTimeResult = await fetchTencentData(symbol);
-      if (!realTimeResult.data) {
-        realTimeResult = await fetchEastmoneyData(symbol);
-      }
-      if (!realTimeResult.data) {
+      // 使用统一数据服务获取实时行情（3级冗余）
+      const quote = await unifiedStockDataService.fetchStockQuote(symbol);
+      if (!quote) {
         setError('无法获取实时数据，请稍后重试');
         setErrorType('network');
         setIsLoading(false);
         return;
       }
-      // 获取多时间周期 K 线数据
-      const multiTimeframeData = await fetchMultiTimeframeKLine(symbol);
       
-      // 默认使用 4 小时线
-      const kLineData = multiTimeframeData?.['240'] || await fetchSinaKLineData(symbol, 360);
+      // 使用统一数据服务获取K线数据（2级冗余）- 获取一年数据（240个交易日）
+      const kLineData = await unifiedStockDataService.fetchKLineData(symbol, 240);
       
-      if (!kLineData || kLineData.length < 90) {
-        realTimeResult.data.dataSource = `${realTimeResult.source} (K 线：${kLineData?.length || 0}条真实数据)`;
-        realTimeResult.data.dataQuality = 'fallback';
-      } else {
-        realTimeResult.data.dataSource = `${realTimeResult.source} (K 线：${kLineData.length}条真实数据)`;
-      }
+      // 构建StockData对象
+      const stockDataBase: Partial<StockData> = {
+        symbol: quote.code,
+        name: name || quote.name || getStockName(symbol) || symbol,
+        currentPrice: quote.currentPrice,
+        change: quote.change,
+        changePercent: quote.changePercent,
+        open: quote.open,
+        high: quote.high,
+        low: quote.low,
+        close: quote.currentPrice - quote.change,
+        volume: quote.volume,
+        marketCap: quote.marketCap,
+        kLineData: kLineData || [],
+        dataSource: quote.source,
+        dataQuality: kLineData && kLineData.length >= 120 ? 'real' : 'fallback',
+        updateTime: new Date().toLocaleString('zh-CN')
+      };
       
-      realTimeResult.data.kLineData = kLineData || [];
-      realTimeResult.data.kLineDataMulti = multiTimeframeData || undefined;
-      realTimeResult.data.currentTimeframe = '240'; // 默认 4 小时线
+      // 计算量化指标
+      const metrics = calculateQuantMetrics(stockDataBase as StockData);
+      const finalData: StockData = { ...stockDataBase, ...metrics } as StockData;
       
-      const metrics = calculateQuantMetrics(realTimeResult.data as StockData);
-      const finalData: StockData = { ...realTimeResult.data, ...metrics, name: name || realTimeResult.data.name } as StockData;
       setStockData(finalData);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : '加载失败';
@@ -814,10 +821,13 @@ export function StockProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function useStock() {
+// useStock hook - 必须在 StockProvider 内使用
+const useStock = function() {
   const context = useContext(StockContext);
   if (context === undefined) {
     throw new Error('useStock must be used within a StockProvider');
   }
   return context;
-}
+};
+
+export { useStock };

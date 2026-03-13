@@ -1,19 +1,19 @@
 /**
  * Stock API Service
  * 
- * Provides real-time stock data with a 4-tier fallback strategy:
+ * Provides real-time stock data with a 3-tier fallback strategy:
  * 1. Tencent Finance (primary)
  * 2. East Money (secondary)
  * 3. Sina Finance (tertiary)
- * 4. Web Search via Tavily (fallback)
+ * 
+ * Note: Web Search fallback removed to ensure 100% real data only
  * 
  * @module services/stockApi
- * @version 1.0.0
+ * @version 1.1.0
  * @author Sonata Team
  */
 
 import type { StockData, ApiLog, ApiConfig } from '../types';
-import { searchStockData } from './webSearchApi';
 
 // ============================================================================
 // Configuration
@@ -336,25 +336,54 @@ interface StockDataParams {
 }
 
 /**
- * Creates a complete StockData object with default values
+ * Creates a complete StockData object with calculated values
  * @param params - Core stock parameters
  * @returns Complete StockData object
  */
 function createStockData(params: StockDataParams): StockData {
   const { symbol, name, currentPrice, change, changePercent, open, high, low, close, volume, marketCap, dataSource } = params;
   
-  // Calculate technical levels
-  const support = low * 0.98;
-  const resistance = high * 1.02;
-  const stopLoss = support * 0.95;
-  const takeProfit1 = resistance * 0.95;
-  const takeProfit2 = resistance * 1.05;
+  // Calculate technical levels based on today's price action
+  // Support = today's low (intraday support)
+  // Resistance = today's high (intraday resistance)
+  const support = low;
+  const resistance = high;
+  const stopLoss = Math.round(support * 0.95 * 100) / 100;
+  const takeProfit1 = Math.round(resistance * 0.95 * 100) / 100;
+  const takeProfit2 = Math.round(resistance * 1.05 * 100) / 100;
   
-  // Calculate position in range (0-100%)
-  const range = resistance - support;
-  const positionInRange = range > 0 
-    ? ((currentPrice - support) / range) * 100 
+  // Calculate position in today's range (0-100%)
+  const dayRange = high - low;
+  const positionInRange = dayRange > 0 
+    ? ((currentPrice - low) / dayRange) * 100 
     : 50;
+  
+  // Calculate quant score based on real data
+  // Trend score: based on changePercent
+  const trendScore = Math.min(100, Math.max(0, 50 + changePercent * 2));
+  
+  // Position score: based on position in day's range
+  const positionScore = Math.round(positionInRange);
+  
+  // Momentum score: based on volume relative to typical volume (estimated)
+  const volumeScore = volume > 0 ? Math.min(100, Math.max(0, 50 + (volume / 1000000))) : 50;
+  
+  // Overall quant score: weighted average
+  const quantScore = Math.round(trendScore * 0.4 + positionScore * 0.3 + volumeScore * 0.3);
+  
+  // Determine importance based on quant score
+  let importance: 'high' | 'medium' | 'low' = 'medium';
+  if (quantScore >= 70) importance = 'high';
+  else if (quantScore < 40) importance = 'low';
+  
+  // Generate trend analysis text
+  const trendAnalysis = changePercent > 2 
+    ? `强势上涨，涨幅${changePercent.toFixed(2)}%，位于今日区间${positionInRange.toFixed(1)}%位置`
+    : changePercent > 0
+    ? `小幅上涨，涨幅${changePercent.toFixed(2)}%，位于今日区间${positionInRange.toFixed(1)}%位置`
+    : changePercent > -2
+    ? `小幅下跌，跌幅${Math.abs(changePercent).toFixed(2)}%，位于今日区间${positionInRange.toFixed(1)}%位置`
+    : `弱势下跌，跌幅${Math.abs(changePercent).toFixed(2)}%，位于今日区间${positionInRange.toFixed(1)}%位置`;
 
   return {
     symbol,
@@ -369,31 +398,31 @@ function createStockData(params: StockDataParams): StockData {
     volume,
     marketCap: Math.floor(marketCap),
     kLineData: [],
-    quantScore: 50,
-    quantSummary: 'Data loaded successfully',
-    detailedAdvice: 'Analysis based on real-time data',
+    quantScore,
+    quantSummary: `量化评分${quantScore}分，基于今日价格走势和成交量`,
+    detailedAdvice: `当前位于今日价格区间${positionInRange.toFixed(1)}%位置，建议${positionInRange > 70 ? '谨慎追高' : positionInRange < 30 ? '关注支撑' : '观望'}`,
     support,
     resistance,
     stopLoss,
     takeProfit1,
     takeProfit2,
-    importance: 'medium',
-    trendAnalysis: 'Analyzing trend...',
+    importance,
+    trendAnalysis,
     supportPrice: support,
     resistancePrice: resistance,
-    actionAdvice: changePercent > 0 ? 'Bullish' : 'Bearish',
-    riskWarning: 'Investment involves risks',
+    actionAdvice: changePercent > 0 ? '关注' : '观望',
+    riskWarning: '以上分析基于今日实时数据，不构成投资建议',
     analysis: {
-      trend: { score: 50, reason: 'Analyzing trend data' },
-      position: { score: Math.round(positionInRange), reason: `Position in range: ${positionInRange.toFixed(1)}%` },
-      momentum: { score: 50, reason: 'Analyzing momentum' },
-      volume: { score: 50, reason: 'Analyzing volume' },
-      sentiment: { score: 50, reason: 'Analyzing sentiment', data: { policy: 50, fund: 50, tech: 50, emotion: 50 } },
-      trendBreakdown: { ma: 50, macd: 50, trendStrength: 50 },
-      positionBreakdown: { supportResistance: 50, fibonacci: 50, historicalHighLow: 50 },
-      momentumBreakdown: { rsi: 50, volumeRatio: 50, priceChangeRate: 50 },
-      sentimentBreakdown: { fundFlow: 50, marketHeat: 50 },
-      riskRewardScore: { score: 50, reason: 'Calculating risk/reward' }
+      trend: { score: Math.round(trendScore), reason: `基于涨跌幅${changePercent.toFixed(2)}%计算` },
+      position: { score: positionScore, reason: `位于今日区间${positionInRange.toFixed(1)}%位置` },
+      momentum: { score: Math.round(volumeScore), reason: `基于成交量${(volume/10000).toFixed(0)}万` },
+      volume: { score: Math.round(volumeScore), reason: `成交量${(volume/10000).toFixed(0)}万` },
+      sentiment: { score: Math.round(trendScore), reason: '基于价格走势', data: { policy: 50, fund: Math.round(volumeScore), tech: Math.round(trendScore), emotion: Math.round(trendScore) } },
+      trendBreakdown: { ma: Math.round(trendScore), macd: Math.round(trendScore), trendStrength: Math.round(Math.abs(changePercent) * 5) },
+      positionBreakdown: { supportResistance: positionScore, fibonacci: 50, historicalHighLow: 50 },
+      momentumBreakdown: { rsi: Math.round(trendScore), volumeRatio: Math.round(volumeScore), priceChangeRate: Math.round(Math.abs(changePercent) * 5) },
+      sentimentBreakdown: { fundFlow: Math.round(volumeScore), marketHeat: Math.round(trendScore) },
+      riskRewardScore: { score: Math.round((resistance - currentPrice) / (currentPrice - stopLoss) * 10), reason: '基于今日高低点计算' }
     },
     dataSource,
     updateTime: new Date().toLocaleString('zh-CN'),
@@ -602,45 +631,7 @@ export async function fetchRealTimeData(
     });
   }
 
-  // Attempt 4: Web Search (fallback)
-  console.log(`[Data Fetch] ${symbol} - Attempting web search...`);
-  const searchStartTime = Date.now();
-  
-  try {
-    const searchData = await searchStockData(symbol, stockNameMap[symbol]);
-    const duration = Date.now() - searchStartTime;
-    
-    if (searchData) {
-      logApiRequest({
-        timestamp: new Date().toISOString(),
-        symbol,
-        apiName: 'Web Search (Tavily)',
-        status: 'success',
-        duration
-      });
-      return { data: searchData, source: 'Web Search (Tavily)' };
-    }
-    
-    logApiRequest({
-      timestamp: new Date().toISOString(),
-      symbol,
-      apiName: 'Web Search (Tavily)',
-      status: 'error',
-      duration,
-      errorMessage: 'Could not extract data from search results'
-    });
-  } catch (error) {
-    const duration = Date.now() - searchStartTime;
-    logApiRequest({
-      timestamp: new Date().toISOString(),
-      symbol,
-      apiName: 'Web Search (Tavily)',
-      status: 'error',
-      duration,
-      errorMessage: error instanceof Error ? error.message : String(error)
-    });
-  }
-
+  // All data sources failed - return null (no fallback to ensure 100% real data)
   console.error(`[Data Fetch] ${symbol} - All data sources failed`);
   return { data: null, source: '' };
 }

@@ -9,11 +9,23 @@ export default defineConfig({
     proxy: {
       // ========== KIMI修复：Vite代理配置 ==========
       
-      // 腾讯K线数据
+      // 腾讯K线数据 (FQ Kline API)
       '/api/tencent/kline': {
         target: 'https://web.ifzq.gtimg.cn',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/tencent\/kline/, '/appstock/v3/kline'),
+        rewrite: (path) => {
+          // 使用腾讯 FQ K 线 API: /appstock/app/fqkline/get
+          // 格式: param=sz002594,day,2025-01-01,2026-03-13,240,qfq
+          const params = new URLSearchParams(path.split('?')[1] || '');
+          const code = params.get('code') || '';
+          const start = params.get('start') || '';
+          const end = params.get('end') || '';
+          const limit = params.get('limit') || '240';
+          const adjust = params.get('adjust') || 'qfq';
+          
+          // FQ K 线 API 格式
+          return `/appstock/app/fqkline/get?param=${code},day,${start},${end},${limit},${adjust}`;
+        },
         secure: false
       },
       
@@ -85,8 +97,15 @@ export default defineConfig({
         secure: false
       },
       
-      // ========== 新增：Flask 后端 API ==========
+      // ========== Flask 后端 API ==========
       '/api/stock-analysis': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+        secure: false
+      },
+      
+      // ========== 热门板块 API ==========
+      '/api/hot-sectors': {
         target: 'http://localhost:5000',
         changeOrigin: true,
         secure: false

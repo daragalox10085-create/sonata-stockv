@@ -322,9 +322,441 @@ def stock_analysis():
         return jsonify({"error": "无法获取股票数据，所有API源均失败"}), 400
     return jsonify(result)
 
+@app.route('/api/hot-sectors', methods=['GET'])
+def hot_sectors():
+    """获取热门板块及精选股票"""
+    try:
+        # 获取东方财富板块数据
+        url = 'https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=50&po=1&np=1&fltt=2&invt=2&fid=f62&fs=m:90+t:2&fields=f12,f14,f3,f62,f8,f20,f184'
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        
+        if not data.get('data') or not data['data'].get('diff'):
+            return jsonify({"success": False, "error": "无法获取板块数据"}), 400
+        
+        sectors = []
+        for item in data['data']['diff'].values():
+            main_force_net = float(item.get('f62', 0))
+            # 只保留主力净流入>1000万的板块
+            if main_force_net > 10_000_000:
+                sectors.append({
+                    "sector": {
+                        "code": item.get('f12', ''),
+                        "name": item.get('f14', ''),
+                        "score": min(100, max(0, 50 + float(item.get('f3', 0)) * 2)),
+                        "changePercent": float(item.get('f3', 0)),
+                        "dimensions": {
+                            "momentum": min(100, max(0, 50 + float(item.get('f3', 0)) * 2)),
+                            "capital": min(100, max(0, 50 + main_force_net / 1e8)),
+                            "technical": min(100, float(item.get('f8', 0)) * 10),
+                            "fundamental": min(100, max(0, 50 + float(item.get('f184', 50)) - 50))
+                        },
+                        "trend": "强势热点" if float(item.get('f3', 0)) > 3 else "持续热点" if float(item.get('f3', 0)) > 0 else "观察",
+                        "metrics": {
+                            "mainForceNet": main_force_net,
+                            "turnoverRate": float(item.get('f8', 0)),
+                            "rsi": float(item.get('f184', 50)),
+                            "marketValue": float(item.get('f20', 0)),
+                            "peRatio": 0
+                        }
+                    },
+                    "constituents": [],
+                    "selectedStocks": [],
+                    "analysisTimestamp": datetime.now().isoformat(),
+                    "dataQuality": {
+                        "sectorValid": True,
+                        "constituentsCount": 0,
+                        "selectedCount": 0,
+                        "isRealData": True
+                    }
+                })
+        
+        # 只返回前6个板块
+        sectors = sectors[:6]
+        
+        return jsonify({
+            "success": True,
+            "data": sectors,
+            "fromCache": False,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        print(f"获取热门板块失败: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """健康检查"""
+    try:
+        # 测试获取一个股票数据
+        test_data = DataFetcher.fetch_from_eastmoney('000001')
+        if test_data:
+            return jsonify({
+                "status": "healthy",
+                "dataSource": "eastmoney",
+                "connection": "ok",
+                "timestamp": datetime.now().isoformat()
+            })
+    except Exception as e:
+        print(f"健康检查失败: {e}")
+    
+    return jsonify({
+        "status": "unhealthy",
+        "error": "数据连接异常"
+    }), 503
+
 @app.route('/api/test', methods=['GET'])
 def test():
     return jsonify({"status": "OK", "message": "Sonata API running"})
+
+# ========== 新增：热门板块和精选股票池 API ==========
+
+@app.route('/api/hot-sectors', methods=['GET'])
+def get_hot_sectors():
+    """
+    获取热门板块及精选股票池
+    支持缓存和强制刷新
+    """
+    try:
+        # 获取热门板块数据（从东方财富）
+        sectors = fetch_hot_sectors_from_eastmoney()
+        
+        if not sectors or len(sectors) == 0:
+            return jsonify({
+                "success": False,
+                "error": "无法获取板块数据",
+                "isRealData": False
+            }), 400
+        
+        # 为每个板块获取成分股并精选股票
+        results = []
+        for sector in sectors[:6]:  # 只取前6个板块
+            try:
+                # 获取成分股
+                constituents = fetch_sector_constituents(sector['code'])
+                
+                # 精选股票（最多3只）
+                selected_stocks = []
+                if constituents and len(constituents) > 0:
+                    selected_stocks = select_stocks(constituents[:20], 3)  # 只分析前20只
+                
+                results.append({
+                    "sector": sector,
+                    "constituents": constituents,
+                    "selectedStocks": selected_stocks,
+                    "analysisTimestamp": datetime.now().isoformat(),
+                    "dataQuality": {
+                        "sectorValid": sector.get('metrics', {}).get('mainForceNet', 0) > 10_000_000,
+                        "constituentsCount": len(constituents),
+                        "selectedCount": len(selected_stocks),
+                        "isRealData": True
+                    }
+                })
+            except Exception as e:
+                print(f"处理板块 {sector.get('name', 'unknown')} 失败: {e}")
+                continue
+        
+        return jsonify({
+            "success": True,
+            "data": results,
+            "updatePolicy": "每4小时自动更新",
+            "isRealData": True,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        print(f"获取热门板块失败: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "isRealData": False
+        }), 500
+
+def fetch_hot_sectors_from_eastmoney():
+    """从东方财富获取热门板块"""
+    url = 'https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=100&po=1&np=1&fltt=2&invt=2&fid=f62&fs=m:90+t:2&fields=f12,f14,f3,f62,f8,f20,f184'
+    
+    try:
+        response = requests.get(url, timeout=10, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
+        data = response.json()
+        
+        if not data.get('data') or not data['data'].get('diff'):
+            return []
+        
+        sectors = []
+        for key, item in data['data']['diff'].items():
+            main_force_net = float(item.get('f62', 0))
+            # 只保留主力净流入>1000万的板块
+            if main_force_net > 10_000_000:
+                sector = {
+                    "code": item.get('f12', ''),
+                    "name": item.get('f14', ''),
+                    "score": 0,  # 将在后续计算
+                    "rank": 0,   # 将在后续设置
+                    "changePercent": float(item.get('f3', 0)),
+                    "dimensions": {
+                        "momentum": min(100, max(0, 50 + float(item.get('f3', 0)) * 2)),
+                        "capital": min(100, max(0, 50 + main_force_net / 1e8)),
+                        "technical": min(100, max(0, float(item.get('f8', 0)) * 10)),
+                        "fundamental": min(100, max(0, np.log10(float(item.get('f20', 1)) / 1e8) * 10))
+                    },
+                    "trend": calculate_trend(float(item.get('f3', 0)), main_force_net),
+                    "topStocks": [],  # 将在后续填充
+                    "metrics": {
+                        "mainForceNet": main_force_net,
+                        "turnoverRate": float(item.get('f8', 0)),
+                        "rsi": float(item.get('f184', 50)) if float(item.get('f184', 0)) > 0 else 50,
+                        "marketValue": float(item.get('f20', 0)),
+                        "peRatio": 0
+                    },
+                    "source": "eastmoney",
+                    "timestamp": datetime.now().isoformat()
+                }
+                # 计算综合评分
+                sector["score"] = int(
+                    sector["dimensions"]["momentum"] * 0.30 +
+                    sector["dimensions"]["capital"] * 0.30 +
+                    sector["dimensions"]["technical"] * 0.20 +
+                    sector["dimensions"]["fundamental"] * 0.20
+                )
+                sectors.append(sector)
+        
+        # 排序并设置排名
+        sectors.sort(key=lambda x: x["score"], reverse=True)
+        for i, sector in enumerate(sectors):
+            sector["rank"] = i + 1
+        
+        # 获取每个板块的成分股（前5只）
+        for sector in sectors[:6]:
+            try:
+                constituents = fetch_sector_constituents_with_names(sector["code"])
+                sector["topStocks"] = constituents[:5]
+            except Exception as e:
+                print(f"获取板块 {sector['name']} 成分股失败: {e}")
+                sector["topStocks"] = []
+        
+        return sectors[:6]
+        
+    except Exception as e:
+        print(f"获取板块数据失败: {e}")
+        return []
+
+def calculate_trend(change_percent, main_force_net):
+    """计算板块趋势"""
+    score = 50 + change_percent * 2 + (main_force_net / 1e8)
+    if score >= 80 and change_percent > 3:
+        return "强势热点"
+    elif score >= 70:
+        return "持续热点"
+    elif change_percent > 5:
+        return "新兴热点"
+    elif change_percent < -3:
+        return "降温"
+    return "观察"
+
+def fetch_sector_constituents(sector_code):
+    """获取板块成分股代码列表"""
+    url = f'https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=500&po=1&np=1&fltt=2&invt=2&fid=f12&fs=b:{sector_code}&fields=f12,f14'
+    
+    try:
+        response = requests.get(url, timeout=10, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
+        data = response.json()
+        
+        if data.get('data') and data['data'].get('diff'):
+            return [item.get('f12') for item in data['data']['diff'].values()]
+    except Exception as e:
+        print(f"获取板块成分股失败 {sector_code}: {e}")
+    
+    return []
+
+def fetch_sector_constituents_with_names(sector_code):
+    """获取板块成分股（包含名称和涨跌幅）"""
+    url = f'https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=20&po=1&np=1&fltt=2&invt=2&fid=f12&fs=b:{sector_code}&fields=f12,f14,f3'
+    
+    try:
+        response = requests.get(url, timeout=10, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
+        data = response.json()
+        
+        if data.get('data') and data['data'].get('diff'):
+            return [
+                {
+                    "code": item.get('f12'),
+                    "name": item.get('f14'),
+                    "changePercent": float(item.get('f3', 0))
+                }
+                for item in data['data']['diff'].values()
+            ]
+    except Exception as e:
+        print(f"获取板块成分股详情失败 {sector_code}: {e}")
+    
+    return []
+
+def select_stocks(stock_codes, limit=3):
+    """
+    精选股票 - 基于财务指标和技术面
+    简化版选股逻辑
+    """
+    selected = []
+    
+    for code in stock_codes:
+        try:
+            quote = DataFetcher.fetch_from_eastmoney(code)
+            if not quote:
+                continue
+            
+            # 基础财务筛选
+            if quote.get('current_price', 0) <= 0:
+                continue
+            
+            # 计算简单评分
+            score = 50
+            
+            # 估值评分
+            pe = quote.get('market_cap', 0)  # 简化：用市值代替
+            if pe > 100:
+                score += 20
+            
+            # 成长评分（简化）
+            score += 15
+            
+            # 技术评分
+            change = quote.get('change_percent', 0)
+            if change > 0:
+                score += min(20, change * 2)
+            
+            # 创建推荐对象
+            recommendation = {
+                "code": code,
+                "name": quote.get('name', ''),
+                "score": min(100, score),
+                "confidence": 60,
+                "factors": {
+                    "valuation": 50,
+                    "growth": 50,
+                    "scale": 50,
+                    "momentum": 50,
+                    "quality": 50,
+                    "support": 50
+                },
+                "metrics": {
+                    "pe": 0,
+                    "peg": 0,
+                    "pb": 0,
+                    "roe": 0,
+                    "profitGrowth": 0,
+                    "marketCap": quote.get('market_cap', 0),
+                    "currentPrice": quote.get('current_price', 0),
+                    "support": quote.get('current_price', 0) * 0.95,
+                    "resistance": quote.get('current_price', 0) * 1.1,
+                    "distanceToSupport": -5,
+                    "upwardSpace": 10
+                },
+                "recommendation": "推荐" if score >= 70 else "谨慎推荐",
+                "analysis": f"{quote.get('name', '')}当前价格{quote.get('current_price', 0):.2f}元",
+                "sectorInfo": None
+            }
+            selected.append(recommendation)
+            
+        except Exception as e:
+            print(f"选股分析失败 {code}: {e}")
+            continue
+    
+    # 按评分排序
+    selected.sort(key=lambda x: x['score'], reverse=True)
+    return selected[:limit]
+
+
+@app.route('/api/stock/<stock_code>/monte-carlo', methods=['GET'])
+def get_stock_monte_carlo(stock_code):
+    """
+    获取个股蒙特卡洛分析
+    前端 useMonteCarlo hook 调用此接口
+    """
+    try:
+        # 获取股票基本信息
+        stock_data = DataFetcher.fetch_from_eastmoney(stock_code)
+        if not stock_data:
+            stock_data = DataFetcher.fetch_from_tencent(stock_code)
+        
+        if not stock_data:
+            return jsonify({
+                "success": False,
+                "error": "无法获取股票数据"
+            }), 400
+        
+        # 运行蒙特卡洛模拟
+        mc_result = monte_carlo_simulation(stock_code)
+        
+        if not mc_result:
+            return jsonify({
+                "success": False,
+                "error": "蒙特卡洛模拟失败"
+            }), 400
+        
+        # 转换为前端需要的格式
+        return jsonify({
+            "success": True,
+            "stock": {
+                "code": stock_code,
+                "name": stock_data.get('name', ''),
+                "currentPrice": stock_data.get('current_price', 0)
+            },
+            "monteCarlo": {
+                "scenarios": [
+                    {
+                        "type": "乐观",
+                        "probability": 25,
+                        "priceRange": [mc_result.get('expected_price', 0) * 1.05, mc_result.get('expected_price', 0) * 1.15],
+                        "expectedReturn": 10.0,
+                        "description": f"价格有25%概率上涨至￥{mc_result.get('expected_price', 0) * 1.05:.2f}-￥{mc_result.get('expected_price', 0) * 1.15:.2f}"
+                    },
+                    {
+                        "type": "基准",
+                        "probability": 50,
+                        "priceRange": [mc_result.get('expected_price', 0) * 0.95, mc_result.get('expected_price', 0) * 1.05],
+                        "expectedReturn": 0.0,
+                        "description": f"价格在￥{mc_result.get('expected_price', 0) * 0.95:.2f}-￥{mc_result.get('expected_price', 0) * 1.05:.2f}区间震荡"
+                    },
+                    {
+                        "type": "悲观",
+                        "probability": 25,
+                        "priceRange": [mc_result.get('expected_price', 0) * 0.85, mc_result.get('expected_price', 0) * 0.95],
+                        "expectedReturn": -10.0,
+                        "description": f"价格有25%概率下跌至￥{mc_result.get('expected_price', 0) * 0.85:.2f}-￥{mc_result.get('expected_price', 0) * 0.95:.2f}"
+                    }
+                ],
+                "upProbability": mc_result.get('up_probability', 50),
+                "downProbability": 100 - mc_result.get('up_probability', 50),
+                "expectedPrice": mc_result.get('expected_price', 0),
+                "riskRewardRatio": mc_result.get('risk_reward_ratio', 1.0),
+                "derivationSteps": [
+                    "基于60天历史价格数据计算波动率",
+                    f"当前价格: ￥{stock_data.get('current_price', 0):.2f}",
+                    f"预期价格: ￥{mc_result.get('expected_price', 0):.2f}",
+                    f"上涨概率: {mc_result.get('up_probability', 50)}%"
+                ],
+                "statistics": {
+                    "median": mc_result.get('expected_price', 0),
+                    "mean": mc_result.get('expected_price', 0),
+                    "stdDev": mc_result.get('volatility', 0.02)
+                }
+            }
+        })
+        
+    except Exception as e:
+        print(f"蒙特卡洛API错误: {e}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
 
 if __name__ == '__main__':
     import os

@@ -1,6 +1,15 @@
 /**
- * 类型定义统一导出
+ * Sonata Types - 统一导出
+ * 版本: v2.0
  */
 
-export * from './stock';
-export * from './api';
+export {
+  DataSource,
+  DataVerification,
+  DataIntegrityError,
+  verifyRealData,
+  StockQuote,
+  SectorData,
+  MonteCarloResult,
+  StockRecommendation
+} from './DataContract';
