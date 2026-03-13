@@ -20,8 +20,8 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
   const [showStockDerivation, setShowStockDerivation] = useState(false);
   
   // 资金流入筛选状态
-  const [capitalFilter, setCapitalFilter] = useState<'all' | 'inflow' | 'outflow'>('all');
-  const [minCapitalInflow, setMinCapitalInflow] = useState<number>(0); // 万元
+  const [capitalFilter, setCapitalFilter] = useState<'inflow' | 'outflow'>('inflow');
+  const [minCapitalInflow, setMinCapitalInflow] = useState<number>(1000); // 万元
   
   // 从StockContext获取真实K线数据
   const { stockData } = useStock();
@@ -32,13 +32,13 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
       // 获取主力净流入金额（万元）
       const mainForceNet = sector.metrics?.mainForceNet || 0;
       
-      if (capitalFilter === 'all') return true;
-      if (capitalFilter === 'inflow') return mainForceNet > 0; // 净流入为正表示资金流入
-      if (capitalFilter === 'outflow') return mainForceNet <= 0; // 净流入为负或零表示资金流出
+      // 资金流入/流出筛选
+      if (capitalFilter === 'inflow') return mainForceNet > 0;
+      if (capitalFilter === 'outflow') return mainForceNet <= 0;
       return true;
     }).filter(sector => {
       // 资金流入金额筛选（仅当选择"资金流入"时生效）
-      if (capitalFilter === 'inflow' && minCapitalInflow > 0 && sector.metrics?.mainForceNet) {
+      if (capitalFilter === 'inflow' && sector.metrics?.mainForceNet) {
         return sector.metrics.mainForceNet >= minCapitalInflow * 10000;
       }
       // 资金流出时不做金额筛选（因为流出是负数）
@@ -377,7 +377,6 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
               onChange={(e) => setCapitalFilter(e.target.value as 'all' | 'inflow' | 'outflow')}
               className="px-3 py-1.5 text-sm bg-white border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              <option value="all">全部板块</option>
               <option value="inflow">资金流入</option>
               <option value="outflow">资金流出</option>
             </select>
@@ -387,7 +386,6 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
               onChange={(e) => setMinCapitalInflow(Number(e.target.value))}
               className="px-3 py-1.5 text-sm bg-white border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              <option value={0}>全部金额</option>
               <option value={1000}>≥1000万</option>
               <option value={5000}>≥5000万</option>
               <option value={10000}>≥1亿</option>
@@ -397,13 +395,11 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
         </div>
         
         {/* 筛选结果提示 */}
-        {capitalFilter !== 'all' || minCapitalInflow > 0 ? (
-          <div className="mb-3 text-sm text-gray-600">
-            筛选条件: {capitalFilter === 'inflow' ? '资金流入' : capitalFilter === 'outflow' ? '资金流出' : '全部'}
-            {minCapitalInflow > 0 && ` · 金额≥${minCapitalInflow >= 10000 ? (minCapitalInflow/10000).toFixed(1) + '亿' : minCapitalInflow + '万'}`}
-            <span className="ml-2 text-blue-600">({filteredSectors.length}个板块)</span>
-          </div>
-        ) : null}
+        <div className="mb-3 text-sm text-gray-600">
+          筛选条件: {capitalFilter === 'inflow' ? '资金流入' : '资金流出'}
+          {capitalFilter === 'inflow' && ` · 金额≥${minCapitalInflow >= 10000 ? (minCapitalInflow/10000).toFixed(1) + '亿' : minCapitalInflow + '万'}`}
+          <span className="ml-2 text-blue-600">({filteredSectors.length}个板块)</span>
+        </div>
         
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredSectors.map((sector) => (
