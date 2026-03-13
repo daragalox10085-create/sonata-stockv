@@ -369,36 +369,6 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
             <span className="text-lg font-bold text-gray-900">🔥 热门板块</span>
             <span className="px-2 py-0.5 bg-orange-100 text-orange-700 text-xs font-medium rounded">Top 5</span>
           </div>
-          
-          {/* 资金流入筛选器 */}
-          <div className="flex items-center gap-2">
-            <select
-              value={capitalFilter}
-              onChange={(e) => setCapitalFilter(e.target.value as 'all' | 'inflow' | 'outflow')}
-              className="px-3 py-1.5 text-sm bg-white border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="inflow">资金流入</option>
-              <option value="outflow">资金流出</option>
-            </select>
-            
-            <select
-              value={minCapitalInflow}
-              onChange={(e) => setMinCapitalInflow(Number(e.target.value))}
-              className="px-3 py-1.5 text-sm bg-white border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value={1000}>≥1000万</option>
-              <option value={5000}>≥5000万</option>
-              <option value={10000}>≥1亿</option>
-              <option value={50000}>≥5亿</option>
-            </select>
-          </div>
-        </div>
-        
-        {/* 筛选结果提示 */}
-        <div className="mb-3 text-sm text-gray-600">
-          筛选条件: {capitalFilter === 'inflow' ? '资金流入' : '资金流出'}
-          {capitalFilter === 'inflow' && ` · 金额≥${minCapitalInflow >= 10000 ? (minCapitalInflow/10000).toFixed(1) + '亿' : minCapitalInflow + '万'}`}
-          <span className="ml-2 text-blue-600">({filteredSectors.length}个板块)</span>
         </div>
         
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
