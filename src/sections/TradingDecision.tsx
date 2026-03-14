@@ -178,14 +178,20 @@ export default function TradingDecision({ data }: TradingDecisionProps) {
         takeProfit2: getValidPrice(data.takeProfit2, parseFloat(getDefaultLevels().takeProfit2), 'takeProfit2'),
       };
 
-  // 计算盈亏比
-  const calculateRiskRewardRatio = (): string => {
-    const currentPrice = data.currentPrice || 10;
-    const defaultBuy = currentPrice * TRADING_RATIO_CONFIG.DEFAULT_BUY_RATIO;
-    const defaultStop = currentPrice * TRADING_RATIO_CONFIG.DEFAULT_STOP_LOSS_RATIO;
-    const defaultTake = currentPrice * TRADING_RATIO_CONFIG.DEFAULT_TAKE_PROFIT_1_RATIO;
+  // 交易成本配置 (A股 typical: 佣金0.025% + 印花税0.1%卖出 + 过户费0.001%)
+  const TRANSACTION_COST = 0.00126; // 约 0.126% 单边综合成本
 
-    const getSafePrice = (customValue: string, dataValue: number, defaultValue: number): number => {
+  /**
+   * 计算盈亏比 (Risk/Reward Ratio)
+   * 公式: 盈亏比 = (止盈价 - 买入价 - 交易成本) / (买入价 - 止损价 + 交易成本)
+   * @returns 盈亏比字符串，保留2位小数
+   */
+  const calculateRiskRewardRatio = (): string => {
+    // 获取有效价格
+    const getEffectivePrice = (customValue: string, dataValue: number, defaultRatio: number): number => {
+      const currentPrice = data.currentPrice || 10;
+      const defaultValue = currentPrice * defaultRatio;
+      
       if (useCustomLevels && customValue) {
         const parsed = parseFloat(customValue);
         if (isFinite(parsed) && parsed > 0) return parsed;
@@ -194,16 +200,49 @@ export default function TradingDecision({ data }: TradingDecisionProps) {
       return defaultValue;
     };
 
-    const buyPrice = getSafePrice(customLevels.buyPrice, data.support, defaultBuy);
-    const stopLoss = getSafePrice(customLevels.stopLoss, data.stopLoss, defaultStop);
-    const takeProfit = getSafePrice(customLevels.takeProfit1, data.takeProfit1, defaultTake);
+    const buyPrice = getEffectivePrice(
+      customLevels.buyPrice, 
+      data.support, 
+      TRADING_RATIO_CONFIG.DEFAULT_BUY_RATIO
+    );
+    const stopLoss = getEffectivePrice(
+      customLevels.stopLoss, 
+      data.stopLoss, 
+      TRADING_RATIO_CONFIG.DEFAULT_STOP_LOSS_RATIO
+    );
+    const takeProfit = getEffectivePrice(
+      customLevels.takeProfit1, 
+      data.takeProfit1, 
+      TRADING_RATIO_CONFIG.DEFAULT_TAKE_PROFIT_1_RATIO
+    );
     
-    if (!isFinite(buyPrice) || !isFinite(stopLoss) || !isFinite(takeProfit)) return '无效';
-    if (buyPrice <= 0 || stopLoss <= 0 || takeProfit <= 0) return '无效';
-    if (buyPrice <= stopLoss || takeProfit <= buyPrice) return '无效';
+    // 验证价格有效性
+    if (!isFinite(buyPrice) || !isFinite(stopLoss) || !isFinite(takeProfit)) {
+      return '无效';
+    }
+    if (buyPrice <= 0 || stopLoss <= 0 || takeProfit <= 0) {
+      return '无效';
+    }
+    if (buyPrice <= stopLoss) {
+      return '无效';
+    }
+    if (takeProfit <= buyPrice) {
+      return '无效';
+    }
     
-    const ratio = (takeProfit - buyPrice) / (buyPrice - stopLoss);
-    return isFinite(ratio) ? ratio.toFixed(2) : '无效';
+    // 计算考虑交易成本的风险和收益
+    // 买入时支付一次成本，卖出时支付一次成本
+    const entryCost = buyPrice * TRANSACTION_COST;
+    const exitCost = takeProfit * TRANSACTION_COST;
+    
+    const risk = buyPrice - stopLoss + entryCost;  // 实际风险 = 价差 + 买入成本
+    const reward = takeProfit - buyPrice - entryCost - exitCost;  // 实际收益 = 价差 - 总成本
+    
+    if (risk <= 0) return '无效';
+    if (reward <= 0) return '<0';
+    
+    const ratio = reward / risk;
+    return isFinite(ratio) && ratio > 0 ? ratio.toFixed(2) : '无效';
   };
   
   const riskRewardRatio = calculateRiskRewardRatio();

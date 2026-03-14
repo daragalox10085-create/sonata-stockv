@@ -21,7 +21,7 @@ export interface ScreenedStock {
 export interface SupportLevel {
   price: number;
   strength: number;
-  type: 'recent_low' | 'ma_support' | 'volume_support' | 'fibonacci' | 'psychological';
+  type: 'recent_low' | 'recent_high' | 'ma_support' | 'volume_support' | 'volume_weighted' | 'high_volume_low' | 'fibonacci' | 'fibonacci_extension' | 'psychological' | 'bollinger' | 'consolidated';
   confidence: number;
 }
 

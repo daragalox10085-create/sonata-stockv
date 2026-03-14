@@ -276,7 +276,9 @@ export class MonteCarloAnalyzer {
     ];
     
     // 8. 计算技术指标
-    const sharpeRatio = annualDrift / annualVolatility;
+    // 夏普比率 = (年化收益率 - 无风险利率) / 年化波动率
+    const RISK_FREE_RATE = 0.03; // 3% 无风险利率（中国10年期国债收益率约2.8-3.2%）
+    const sharpeRatio = (annualDrift - RISK_FREE_RATE) / annualVolatility;
     const maxDrawdown = this.calculateMaxDrawdown(finalPrices);
     
     // 9. 生成推荐
@@ -422,11 +424,63 @@ export class MonteCarloAnalyzer {
     };
   }
 
-  // 生成标准正态分布随机数
+  // Box-Muller 变换缓存，用于生成成对的正态分布随机数
+  private spareRandom: number | null = null;
+
+  /**
+   * 生成标准正态分布随机数 (Box-Muller 变换)
+   * 使用种子控制，确保结果可重现
+   * @returns 标准正态分布随机数 (均值为0，标准差为1)
+   */
   private getRandomNormal(): number {
-    const u1 = Math.random();
-    const u2 = Math.random();
-    return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+    // 如果有缓存的随机数，直接返回
+    if (this.spareRandom !== null) {
+      const result = this.spareRandom;
+      this.spareRandom = null;
+      return result;
+    }
+    
+    // Box-Muller 变换生成一对正态分布随机数
+    let u1: number, u2: number, radius: number;
+    
+    // 使用拒绝采样确保在单位圆内
+    do {
+      u1 = Math.random() * 2 - 1; // [-1, 1]
+      u2 = Math.random() * 2 - 1; // [-1, 1]
+      radius = u1 * u1 + u2 * u2;
+    } while (radius >= 1 || radius === 0);
+    
+    // 极坐标变换
+    const scale = Math.sqrt(-2 * Math.log(radius) / radius);
+    const z1 = u1 * scale;
+    const z2 = u2 * scale;
+    
+    // 缓存第二个随机数，下次使用
+    this.spareRandom = z2;
+    
+    return z1;
+  }
+
+  /**
+   * 设置随机种子 (用于结果重现)
+   * @param seed - 随机种子字符串
+   */
+  setSeed(seed: string): void {
+    // 简单的种子化随机数生成器 (Mulberry32)
+    let t = seed.split('').reduce((a, b) => {
+      a = ((a << 5) - a) + b.charCodeAt(0);
+      return a & a;
+    }, 0);
+    
+    const seededRandom = () => {
+      t = (t + 0x6D2B79F5) | 0;
+      let r = Math.imul(t ^ (t >>> 15), t | 1);
+      r ^= r + Math.imul(r ^ (r >>> 7), r | 61);
+      return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+    };
+    
+    // 替换 Math.random
+    (Math as any).random = seededRandom;
   }
 
   // 计算最大回撤

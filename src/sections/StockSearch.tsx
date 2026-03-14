@@ -53,10 +53,37 @@ export default function StockSearch({ onStartAnalysis }: { onStartAnalysis: (sym
   }, [searchKeyword]);
 
   const handleStart = async () => {
-    if (!symbol.trim()) { alert('请输入股票代码'); return; }
-    if (!/^\d{6}$/.test(symbol.trim())) { alert('请输入 6 位数字的股票代码'); return; }
+    const trimmedSymbol = symbol.trim();
+    
+    // 验证是否为空
+    if (!trimmedSymbol) { 
+      alert('请输入股票代码'); 
+      return; 
+    }
+    
+    // 验证是否为6位数字
+    if (!/^\d{6}$/.test(trimmedSymbol)) { 
+      alert('请输入 6 位数字的股票代码'); 
+      return; 
+    }
+    
+    // 验证股票代码前缀是否有效
+    const prefix = trimmedSymbol.substring(0, 3);
+    const validPrefixes = Object.keys(stockPrefixMap);
+    if (!validPrefixes.includes(prefix)) {
+      alert(`股票代码 ${trimmedSymbol} 不存在或非A股代码\n\n有效代码前缀：\n沪市：600/601/603/605/688\n深市：000/001/002/003/300/301\nETF：510/511/512/513/515/516/518/519`);
+      return;
+    }
+    
     setIsLoading(true);
-    try { await onStartAnalysis(symbol.trim(), name.trim() || symbol.trim()); } finally { setIsLoading(false); }
+    try { 
+      await onStartAnalysis(trimmedSymbol, name.trim() || trimmedSymbol); 
+    } catch (error) {
+      console.error('分析失败:', error);
+      alert('股票分析失败，请检查代码是否正确或稍后重试');
+    } finally { 
+      setIsLoading(false); 
+    }
   };
 
   const hotStocks = [

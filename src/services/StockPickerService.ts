@@ -239,23 +239,50 @@ export class StockPickerService {
   }
   
   /**
-   * 计算RSI（简化版）
+   * 计算RSI（使用 Wilder's smoothing）
+   * @param klineData - K线数据数组
+   * @param period - 计算周期，默认14
+   * @returns RSI 值 (0-100)
    */
-  private calculateRSI(klineData: any[]): number {
-    if (klineData.length < 2) return 50;
+  private calculateRSI(klineData: any[], period: number = 14): number {
+    if (klineData.length < period + 1) return 50;
     
-    let gains = 0;
-    let losses = 0;
-    
+    // 计算价格变化
+    const changes: number[] = [];
     for (let i = 1; i < klineData.length; i++) {
-      const change = klineData[i].close - klineData[i - 1].close;
-      if (change > 0) gains += change;
-      else losses += Math.abs(change);
+      changes.push(klineData[i].close - klineData[i - 1].close);
     }
     
-    if (losses === 0) return 100;
+    // 取最近 period 个变化值计算初始平均
+    const recentChanges = changes.slice(-period);
     
-    const rs = gains / losses;
+    let avgGain = 0;
+    let avgLoss = 0;
+    
+    for (const change of recentChanges) {
+      if (change > 0) {
+        avgGain += change;
+      } else {
+        avgLoss += Math.abs(change);
+      }
+    }
+    
+    avgGain /= period;
+    avgLoss /= period;
+    
+    // 使用 Wilder's smoothing 计算后续平均值
+    const remainingChanges = changes.slice(0, -period);
+    for (const change of remainingChanges) {
+      const gain = change > 0 ? change : 0;
+      const loss = change < 0 ? Math.abs(change) : 0;
+      
+      avgGain = (avgGain * (period - 1) + gain) / period;
+      avgLoss = (avgLoss * (period - 1) + loss) / period;
+    }
+    
+    if (avgLoss === 0) return 100;
+    
+    const rs = avgGain / avgLoss;
     return 100 - (100 / (1 + rs));
   }
   

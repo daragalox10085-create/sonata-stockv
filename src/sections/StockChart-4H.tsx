@@ -89,7 +89,7 @@ export default function StockChart4H({
     const ma10 = calculateMA(chartData, maPeriod * 2);
     const ma20 = calculateMA(chartData, maPeriod * 4);
 
-    // 动态计算支撑位、压力位、止损位
+    // 动态计算支撑位、压力位、止损位（作为后备）
     const lookbackPeriod = Math.min(60, chartData.length); // 看最近60根K线
     const recentData = chartData.slice(-lookbackPeriod);
     
@@ -97,9 +97,11 @@ export default function StockChart4H({
     const recentLow = Math.min(...recentData.map(k => k.low));
     const recentHigh = Math.max(...recentData.map(k => k.high));
     const atr = calculateATR(recentData, 14);
-    const dynamicSupport = recentLow - 0.5 * atr;
-    const dynamicResistance = recentHigh + 0.5 * atr;
-    const dynamicStopLoss = dynamicSupport - atr;
+    
+    // 使用传入的参数，如果没有传入则使用动态计算的值
+    const dynamicSupport = support !== undefined ? support : (recentLow - 0.5 * atr);
+    const dynamicResistance = resistance !== undefined ? resistance : (recentHigh + 0.5 * atr);
+    const dynamicStopLoss = stopLoss !== undefined ? stopLoss : (dynamicSupport - atr);
     
     // 计算斐波那契回调位（基于最近的高低点）
     const fibLevels = calculateFibonacciLevelsDynamic(recentHigh, recentLow);
@@ -118,7 +120,7 @@ export default function StockChart4H({
       },
       label: {
         formatter: (params: any) => {
-          return `现价¥${Number(params.value).toFixed(1)}`;
+          return `现价¥${Number(params.value).toFixed(2)}`;
         },
         position: 'end',
         color: '#1E40AF',
@@ -138,7 +140,7 @@ export default function StockChart4H({
       },
       label: {
         formatter: (params: any) => {
-          return `止损¥${Number(params.value).toFixed(1)}`;
+          return `止损¥${Number(params.value).toFixed(2)}`;
         },
         position: 'end',
         color: '#DC2626',
@@ -158,7 +160,7 @@ export default function StockChart4H({
       },
       label: {
         formatter: (params: any) => {
-          return `支撑¥${Number(params.value).toFixed(1)}`;
+          return `支撑¥${Number(params.value).toFixed(2)}`;
         },
         position: 'end',
         color: '#6B7280',
@@ -178,7 +180,7 @@ export default function StockChart4H({
       },
       label: {
         formatter: (params: any) => {
-          return `压力¥${Number(params.value).toFixed(1)}`;
+          return `压力¥${Number(params.value).toFixed(2)}`;
         },
         position: 'end',
         color: '#6B7280',
@@ -201,7 +203,7 @@ export default function StockChart4H({
         },
         label: {
           formatter: (params: any) => {
-            return `${fibNames[index]} ¥${Number(params.value).toFixed(1)}`;
+            return `${fibNames[index]} ¥${Number(params.value).toFixed(2)}`;
           },
           position: 'end',
           color: fibColors[index],
@@ -235,10 +237,10 @@ export default function StockChart4H({
           const item = params[0];
           return `
             <div style="font-weight:bold">${item.name}</div>
-            开：${item.data[1]}<br/>
-            收：${item.data[2]}<br/>
-            低：${item.data[3]}<br/>
-            高：${item.data[4]}
+            开：¥${Number(item.data[1]).toFixed(2)}<br/>
+            收：¥${Number(item.data[2]).toFixed(2)}<br/>
+            低：¥${Number(item.data[3]).toFixed(2)}<br/>
+            高：¥${Number(item.data[4]).toFixed(2)}
           `;
         }
       },
@@ -351,7 +353,7 @@ export default function StockChart4H({
           label: {
             show: true,
             position: 'right',
-            formatter: '  现价 ¥{c}',
+            formatter: `  现价 ¥${currentPrice.toFixed(2)}`,
             color: '#1E40AF',
             fontSize: 12,
             backgroundColor: 'rgba(255,255,255,0.8)',
@@ -374,7 +376,7 @@ export default function StockChart4H({
           label: {
             show: true,
             position: 'right',
-            formatter: '  止损 ¥{c}',
+            formatter: `  止损 ¥${(stopLoss !== undefined ? stopLoss : currentPrice * 0.95).toFixed(2)}`,
             color: '#DC2626',
             fontSize: 12,
             backgroundColor: 'rgba(255,255,255,0.8)',
@@ -396,7 +398,7 @@ export default function StockChart4H({
           type: 'dotted'
         },
         label: {
-          formatter: `F${['23.6%', '38.2%', '50%', '61.8%'][index]} ¥{c}`,
+          formatter: `F${['23.6%', '38.2%', '50%', '61.8%'][index]} ¥${level.toFixed(2)}`,
           position: 'end',
           color: ['#9333EA', '#7C3AED', '#6D28D9', '#5B21B6'][index],
           fontSize: 10
@@ -414,7 +416,7 @@ export default function StockChart4H({
             type: 'dotted'
           },
           label: {
-            formatter: '支撑 ¥{c}',
+            formatter: `支撑 ¥${support.toFixed(2)}`,
             position: 'end',
             color: '#6B7280',
             fontSize: 12
@@ -431,7 +433,7 @@ export default function StockChart4H({
             type: 'dotted'
           },
           label: {
-            formatter: '压力 ¥{c}',
+            formatter: `压力 ¥${resistance.toFixed(2)}`,
             position: 'end',
             color: '#6B7280',
             fontSize: 12
@@ -619,59 +621,45 @@ export default function StockChart4H({
         </div>
       )}
 
-      {/* 关键价位标注 - 使用动态计算的值 */}
+      {/* 关键价位标注 - 使用传入的参数 */}
       {!error && data.length > 0 && (
-        (() => {
-          // 动态计算关键价位
-          const lookbackPeriod = Math.min(60, data.length);
-          const recentData = data.slice(-lookbackPeriod);
-          const recentLow = Math.min(...recentData.map(k => k.low));
-          const recentHigh = Math.max(...recentData.map(k => k.high));
-          const atr = calculateATR(recentData, 14);
-          const dynamicSupport = recentLow - 0.5 * atr;
-          const dynamicResistance = recentHigh + 0.5 * atr;
-          const dynamicStopLoss = dynamicSupport - atr;
-          
-          return (
-            <div className="mt-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-              <div className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-200 rounded">
-                <span className="text-base">💜</span>
-                <div>
-                  <div className="text-xs text-text-tertiary">现价</div>
-                  <div className="text-sm font-bold text-primary">¥{currentPrice.toFixed(1)}</div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 p-2 bg-red-50 border border-red-200 rounded">
-                <span className="text-base">🔴</span>
-                <div>
-                  <div className="text-xs text-text-tertiary">止损位</div>
-                  <div className="text-sm font-bold text-danger">¥{dynamicStopLoss.toFixed(1)}</div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 p-2 bg-bg-surface border border-border-light rounded">
-                <span className="text-base">🟣</span>
-                <div>
-                  <div className="text-xs text-text-tertiary">支撑位</div>
-                  <div className="text-sm font-bold text-text-secondary">¥{dynamicSupport.toFixed(1)}</div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 p-2 bg-bg-surface border border-border-light rounded">
-                <span className="text-base">🟠</span>
-                <div>
-                  <div className="text-xs text-text-tertiary">压力位</div>
-                  <div className="text-sm font-bold text-text-secondary">¥{dynamicResistance.toFixed(1)}</div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2 p-2 bg-purple-50 border border-purple-200 rounded">
-                <span className="text-base">📐</span>
-                <div>
-                  <div className="text-xs text-text-tertiary">斐波那契</div>
-                  <div className="text-sm font-bold text-purple-700">23.6% - 61.8%</div>
-                </div>
-              </div>
+        <div className="mt-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div className="flex items-center gap-2 p-2 bg-blue-50 border border-blue-200 rounded">
+            <span className="text-base">💜</span>
+            <div>
+              <div className="text-xs text-text-tertiary">现价</div>
+              <div className="text-sm font-bold text-primary">¥{currentPrice.toFixed(2)}</div>
             </div>
-          );
-        })()
+          </div>
+          <div className="flex items-center gap-2 p-2 bg-red-50 border border-red-200 rounded">
+            <span className="text-base">🔴</span>
+            <div>
+              <div className="text-xs text-text-tertiary">止损位</div>
+              <div className="text-sm font-bold text-danger">¥{(stopLoss !== undefined ? stopLoss : currentPrice * 0.95).toFixed(2)}</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 p-2 bg-bg-surface border border-border-light rounded">
+            <span className="text-base">🟣</span>
+            <div>
+              <div className="text-xs text-text-tertiary">支撑位</div>
+              <div className="text-sm font-bold text-text-secondary">¥{(support !== undefined ? support : currentPrice * 0.9).toFixed(2)}</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 p-2 bg-bg-surface border border-border-light rounded">
+            <span className="text-base">🟠</span>
+            <div>
+              <div className="text-xs text-text-tertiary">压力位</div>
+              <div className="text-sm font-bold text-text-secondary">¥{(resistance !== undefined ? resistance : currentPrice * 1.1).toFixed(2)}</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 p-2 bg-purple-50 border border-purple-200 rounded">
+            <span className="text-base">📐</span>
+            <div>
+              <div className="text-xs text-text-tertiary">斐波那契</div>
+              <div className="text-sm font-bold text-purple-700">23.6% - 61.8%</div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

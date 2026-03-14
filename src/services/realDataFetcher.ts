@@ -1,5 +1,15 @@
 import { StockQuote, SectorData, DataSource } from '../types/DataContract';
 
+/**
+ * 布林带计算结果接口
+ */
+interface BollingerBands {
+  upper: number;      // 上轨
+  middle: number;     // 中轨 (MA)
+  lower: number;      // 下轨
+  bandwidth: number;  // 带宽 (upper - lower) / middle
+}
+
 export class RealDataFetcher {
   private readonly EASTMONEY_BASE = 'https://push2.eastmoney.com/api';
   private readonly KLINE_BASE = 'https://push2his.eastmoney.com/api';
@@ -182,12 +192,12 @@ export class RealDataFetcher {
     const recentLow = Math.min(...prices.slice(-20));
     const recentHigh = Math.max(...prices.slice(-20));
     
-    // 布林带下轨计算
-    const bbLower = this.calculateBollingerLower(prices, 20);
+    // 布林带计算
+    const bb = this.calculateBollingerBands(prices, 20);
     
     // 多方法综合支撑位（取最接近当前价格的）
-    const supports = [ma20, ma60, recentLow, bbLower].filter(s => s > 0 && s < currentPrice);
-    const resistances = [recentHigh, currentPrice * 1.1].filter(r => r > currentPrice);
+    const supports = [ma20, ma60, recentLow, bb.lower].filter(s => s > 0 && s < currentPrice);
+    const resistances = [recentHigh, bb.upper, currentPrice * 1.1].filter(r => r > currentPrice);
     
     if (supports.length === 0 || resistances.length === 0) return null;
     
@@ -207,11 +217,49 @@ export class RealDataFetcher {
     return recent.reduce((a, b) => a + b, 0) / period;
   }
 
-  private calculateBollingerLower(prices: number[], period: number): number {
+  /**
+   * 计算布林带 (Bollinger Bands)
+   * 使用样本标准差 (除以 n-1)，符合金融分析规范
+   * @param prices - 价格数组
+   * @param period - 计算周期，默认20
+   * @returns 布林带计算结果
+   */
+  private calculateBollingerBands(prices: number[], period: number = 20): BollingerBands {
+    if (prices.length < period) {
+      const lastPrice = prices[prices.length - 1] || 0;
+      return {
+        upper: lastPrice * 1.02,
+        middle: lastPrice,
+        lower: lastPrice * 0.98,
+        bandwidth: 0.04
+      };
+    }
+    
     const recent = prices.slice(-period);
-    const ma = recent.reduce((a, b) => a + b, 0) / period;
-    const variance = recent.reduce((sum, p) => sum + Math.pow(p - ma, 2), 0) / period;
-    return ma - (2 * Math.sqrt(variance));
+    const middle = recent.reduce((a, b) => a + b, 0) / period;
+    
+    // 使用样本标准差 (除以 n-1)
+    const variance = recent.reduce((sum, p) => sum + Math.pow(p - middle, 2), 0) / (period - 1);
+    const std = Math.sqrt(variance);
+    
+    const upper = middle + 2 * std;
+    const lower = middle - 2 * std;
+    
+    return {
+      upper: Math.round(upper * 100) / 100,
+      middle: Math.round(middle * 100) / 100,
+      lower: Math.round(lower * 100) / 100,
+      bandwidth: Math.round(((upper - lower) / middle) * 10000) / 10000
+    };
+  }
+
+  /**
+   * 计算布林带下轨 (兼容旧版接口)
+   * @deprecated 请使用 calculateBollingerBands 替代
+   */
+  private calculateBollingerLower(prices: number[], period: number): number {
+    const bands = this.calculateBollingerBands(prices, period);
+    return bands.lower;
   }
 
   private safeNumber(val: any, defaultValue: number = 0): number {

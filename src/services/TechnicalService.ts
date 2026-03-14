@@ -34,20 +34,22 @@ export class TechnicalService {
   }
 
   /**
-   * 计算支撑位
+   * 计算支撑位 - 增强版
+   * 综合多种方法：近期低点、均线、斐波那契、成交量加权、布林带、心理关口
    */
   private calculateSupportLevels(klineData: KLineData[]): SupportLevel[] {
     const supports: SupportLevel[] = [];
     const recentData = klineData.slice(-60); // 最近60根K线
+    const currentPrice = klineData[klineData.length - 1]?.close || 0;
     
     // 1. 近期低点支撑
     const recentLows = this.findRecentLows(recentData, 5);
-    recentLows.forEach(low => {
+    recentLows.forEach((low, index) => {
       supports.push({
         price: low.price,
-        strength: 80,
+        strength: 85 - index * 5, // 最近低点强度递减
         type: 'recent_low',
-        confidence: 0.8,
+        confidence: 0.85,
       });
     });
     
@@ -59,25 +61,39 @@ export class TechnicalService {
     const fibonacciSupports = this.calculateFibonacciSupports(klineData);
     supports.push(...fibonacciSupports);
     
-    // 按强度排序
-    return supports.sort((a, b) => b.strength - a.strength);
+    // 4. 成交量加权支撑
+    const volumeWeightedSupports = this.calculateVolumeWeightedSupports(klineData);
+    supports.push(...volumeWeightedSupports);
+    
+    // 5. 布林带下轨支撑
+    const bollingerSupport = this.calculateBollingerSupport(klineData);
+    if (bollingerSupport) supports.push(bollingerSupport);
+    
+    // 6. 心理关口支撑
+    const psychologicalSupports = this.calculatePsychologicalSupports(currentPrice);
+    supports.push(...psychologicalSupports);
+    
+    // 去重并排序（价格接近的合并）
+    return this.consolidateLevels(supports).sort((a, b) => b.strength - a.strength);
   }
 
   /**
-   * 计算阻力位
+   * 计算阻力位 - 增强版
+   * 综合多种方法：近期高点、均线、斐波那契、布林带、心理关口
    */
   private calculateResistanceLevels(klineData: KLineData[]): SupportLevel[] {
     const resistances: SupportLevel[] = [];
     const recentData = klineData.slice(-60);
+    const currentPrice = klineData[klineData.length - 1]?.close || 0;
     
     // 1. 近期高点阻力
     const recentHighs = this.findRecentHighs(recentData, 5);
-    recentHighs.forEach(high => {
+    recentHighs.forEach((high, index) => {
       resistances.push({
         price: high.price,
-        strength: 80,
-        type: 'recent_low',
-        confidence: 0.8,
+        strength: 85 - index * 5,
+        type: 'recent_high',
+        confidence: 0.85,
       });
     });
     
@@ -85,7 +101,176 @@ export class TechnicalService {
     const maResistances = this.calculateMAResistances(klineData);
     resistances.push(...maResistances);
     
-    return resistances.sort((a, b) => b.strength - a.strength);
+    // 3. 斐波那契阻力位
+    const fibonacciResistances = this.calculateFibonacciResistances(klineData);
+    resistances.push(...fibonacciResistances);
+    
+    // 4. 布林带上轨阻力
+    const bollingerResistance = this.calculateBollingerResistance(klineData);
+    if (bollingerResistance) resistances.push(bollingerResistance);
+    
+    // 5. 心理关口阻力
+    const psychologicalResistances = this.calculatePsychologicalResistances(currentPrice);
+    resistances.push(...psychologicalResistances);
+    
+    // 去重并排序
+    return this.consolidateLevels(resistances).sort((a, b) => b.strength - a.strength);
+  }
+
+  /**
+   * 计算成交量加权支撑位
+   * 在成交量大的价格区域形成强支撑
+   */
+  private calculateVolumeWeightedSupports(klineData: KLineData[]): SupportLevel[] {
+    const supports: SupportLevel[] = [];
+    const recentData = klineData.slice(-20); // 最近20天
+    
+    // 计算成交量加权平均价格 (VWAP)
+    let totalVolume = 0;
+    let totalValue = 0;
+    
+    for (const k of recentData) {
+      const typicalPrice = (k.high + k.low + k.close) / 3;
+      totalVolume += k.volume;
+      totalValue += typicalPrice * k.volume;
+    }
+    
+    if (totalVolume > 0) {
+      const vwap = totalValue / totalVolume;
+      supports.push({
+        price: Math.round(vwap * 100) / 100,
+        strength: 75,
+        type: 'volume_weighted',
+        confidence: 0.75,
+      });
+    }
+    
+    // 找出高成交量低点
+    const avgVolume = recentData.reduce((sum, k) => sum + k.volume, 0) / recentData.length;
+    const highVolumeLows = recentData
+      .filter(k => k.volume > avgVolume * 1.5)
+      .sort((a, b) => a.low - b.low)
+      .slice(0, 3);
+    
+    highVolumeLows.forEach((k, index) => {
+      supports.push({
+        price: k.low,
+        strength: 70 - index * 5,
+        type: 'high_volume_low',
+        confidence: 0.7,
+      });
+    });
+    
+    return supports;
+  }
+
+  /**
+   * 计算布林带支撑
+   */
+  private calculateBollingerSupport(klineData: KLineData[]): SupportLevel | null {
+    const period = 20;
+    if (klineData.length < period) return null;
+    
+    const prices = klineData.map(k => k.close);
+    const recent = prices.slice(-period);
+    const ma = recent.reduce((a, b) => a + b, 0) / period;
+    const variance = recent.reduce((sum, p) => sum + Math.pow(p - ma, 2), 0) / (period - 1);
+    const std = Math.sqrt(variance);
+    const lower = ma - 2 * std;
+    
+    return {
+      price: Math.round(lower * 100) / 100,
+      strength: 72,
+      type: 'bollinger',
+      confidence: 0.72,
+    };
+  }
+
+  /**
+   * 计算布林带阻力
+   */
+  private calculateBollingerResistance(klineData: KLineData[]): SupportLevel | null {
+    const period = 20;
+    if (klineData.length < period) return null;
+    
+    const prices = klineData.map(k => k.close);
+    const recent = prices.slice(-period);
+    const ma = recent.reduce((a, b) => a + b, 0) / period;
+    const variance = recent.reduce((sum, p) => sum + Math.pow(p - ma, 2), 0) / (period - 1);
+    const std = Math.sqrt(variance);
+    const upper = ma + 2 * std;
+    
+    return {
+      price: Math.round(upper * 100) / 100,
+      strength: 72,
+      type: 'bollinger',
+      confidence: 0.72,
+    };
+  }
+
+  /**
+   * 计算心理关口支撑
+   * 整数位和心理价位形成支撑
+   */
+  private calculatePsychologicalSupports(currentPrice: number): SupportLevel[] {
+    const supports: SupportLevel[] = [];
+    const priceLevel = Math.floor(currentPrice);
+    
+    // 主要整数位
+    const majorLevels = [100, 50, 20, 10, 5];
+    for (const level of majorLevels) {
+      const supportPrice = Math.floor(priceLevel / level) * level;
+      if (supportPrice > 0 && supportPrice < currentPrice) {
+        supports.push({
+          price: supportPrice,
+          strength: 65,
+          type: 'psychological',
+          confidence: 0.65,
+        });
+      }
+    }
+    
+    // 当前价格的0.9倍作为心理支撑
+    supports.push({
+      price: Math.round(currentPrice * 0.9 * 100) / 100,
+      strength: 60,
+      type: 'psychological',
+      confidence: 0.6,
+    });
+    
+    return supports;
+  }
+
+  /**
+   * 计算心理关口阻力
+   */
+  private calculatePsychologicalResistances(currentPrice: number): SupportLevel[] {
+    const resistances: SupportLevel[] = [];
+    const priceLevel = Math.ceil(currentPrice);
+    
+    // 主要整数位
+    const majorLevels = [100, 50, 20, 10, 5];
+    for (const level of majorLevels) {
+      const resistancePrice = Math.ceil(priceLevel / level) * level;
+      if (resistancePrice > currentPrice) {
+        resistances.push({
+          price: resistancePrice,
+          strength: 65,
+          type: 'psychological',
+          confidence: 0.65,
+        });
+      }
+    }
+    
+    // 当前价格的1.1倍作为心理阻力
+    resistances.push({
+      price: Math.round(currentPrice * 1.1 * 100) / 100,
+      strength: 60,
+      type: 'psychological',
+      confidence: 0.6,
+    });
+    
+    return resistances;
   }
 
   /**
@@ -142,7 +327,7 @@ export class TechnicalService {
   }
 
   /**
-   * 计算黄金分割位支撑
+   * 计算斐波那契支撑位
    */
   private calculateFibonacciSupports(klineData: KLineData[]): SupportLevel[] {
     const supports: SupportLevel[] = [];
@@ -154,17 +339,104 @@ export class TechnicalService {
     
     if (range <= 0) return supports;
     
-    const fibLevels = [0.236, 0.382, 0.5, 0.618];
-    fibLevels.forEach(level => {
+    // 斐波那契回调位
+    const fibLevels = [
+      { level: 0.236, strength: 68 },
+      { level: 0.382, strength: 75 },
+      { level: 0.5, strength: 78 },
+      { level: 0.618, strength: 80 },
+      { level: 0.786, strength: 72 }
+    ];
+    
+    fibLevels.forEach(({ level, strength }) => {
       supports.push({
-        price: high - range * level,
-        strength: 75,
+        price: Math.round((high - range * level) * 100) / 100,
+        strength,
         type: 'fibonacci',
-        confidence: 0.75,
+        confidence: strength / 100,
       });
     });
     
     return supports;
+  }
+
+  /**
+   * 计算斐波那契阻力位
+   */
+  private calculateFibonacciResistances(klineData: KLineData[]): SupportLevel[] {
+    const resistances: SupportLevel[] = [];
+    const recentData = klineData.slice(-60);
+    
+    const high = Math.max(...recentData.map(k => k.high));
+    const low = Math.min(...recentData.map(k => k.low));
+    const range = high - low;
+    
+    if (range <= 0) return resistances;
+    
+    // 斐波那契扩展位
+    const fibExtensions = [
+      { level: 1.272, strength: 75 },
+      { level: 1.618, strength: 80 },
+      { level: 2.0, strength: 72 }
+    ];
+    
+    fibExtensions.forEach(({ level, strength }) => {
+      resistances.push({
+        price: Math.round((high + range * (level - 1)) * 100) / 100,
+        strength,
+        type: 'fibonacci_extension',
+        confidence: strength / 100,
+      });
+    });
+    
+    return resistances;
+  }
+
+  /**
+   * 合并价格接近的支撑位/阻力位
+   * @param levels - 价格水平数组
+   * @param threshold - 合并阈值（默认2%）
+   * @returns 合并后的价格水平
+   */
+  private consolidateLevels(levels: SupportLevel[], threshold: number = 0.02): SupportLevel[] {
+    if (levels.length === 0) return levels;
+    
+    // 按价格排序
+    const sorted = [...levels].sort((a, b) => a.price - b.price);
+    const result: SupportLevel[] = [];
+    
+    let current = sorted[0];
+    
+    for (let i = 1; i < sorted.length; i++) {
+      const next = sorted[i];
+      const diff = Math.abs(next.price - current.price) / current.price;
+      
+      if (diff < threshold) {
+        // 合并，取强度更高的
+        if (next.strength > current.strength) {
+          current = {
+            ...next,
+            price: (current.price * current.strength + next.price * next.strength) / 
+                   (current.strength + next.strength), // 加权平均
+            strength: Math.max(current.strength, next.strength),
+            type: current.type === next.type ? current.type : 'consolidated',
+          };
+        }
+      } else {
+        result.push({
+          ...current,
+          price: Math.round(current.price * 100) / 100
+        });
+        current = next;
+      }
+    }
+    
+    result.push({
+      ...current,
+      price: Math.round(current.price * 100) / 100
+    });
+    
+    return result;
   }
 
   /**
@@ -296,23 +568,51 @@ export class TechnicalService {
   }
 
   /**
-   * 计算RSI
+   * 计算RSI (Relative Strength Index)
+   * 使用 Wilder's smoothing 方法，符合标准 RSI 计算规范
+   * @param prices - 价格数组
+   * @param period - 计算周期，默认14
+   * @returns RSI 值 (0-100)
    */
-  private calculateRSI(prices: number[]): number {
-    if (prices.length < 2) return 50;
+  private calculateRSI(prices: number[], period: number = 14): number {
+    if (prices.length < period + 1) return 50;
     
-    let gains = 0;
-    let losses = 0;
-    
+    // 计算价格变化
+    const changes: number[] = [];
     for (let i = 1; i < prices.length; i++) {
-      const change = prices[i] - prices[i - 1];
-      if (change > 0) gains += change;
-      else losses += Math.abs(change);
+      changes.push(prices[i] - prices[i - 1]);
     }
     
-    if (losses === 0) return 100;
+    // 取最近 period 个变化值计算初始平均
+    const recentChanges = changes.slice(-period);
     
-    const rs = gains / losses;
+    let avgGain = 0;
+    let avgLoss = 0;
+    
+    for (const change of recentChanges) {
+      if (change > 0) {
+        avgGain += change;
+      } else {
+        avgLoss += Math.abs(change);
+      }
+    }
+    
+    avgGain /= period;
+    avgLoss /= period;
+    
+    // 使用 Wilder's smoothing 计算后续平均值
+    const remainingChanges = changes.slice(0, -period);
+    for (const change of remainingChanges) {
+      const gain = change > 0 ? change : 0;
+      const loss = change < 0 ? Math.abs(change) : 0;
+      
+      avgGain = (avgGain * (period - 1) + gain) / period;
+      avgLoss = (avgLoss * (period - 1) + loss) / period;
+    }
+    
+    if (avgLoss === 0) return 100;
+    
+    const rs = avgGain / avgLoss;
     return 100 - (100 / (1 + rs));
   }
 }

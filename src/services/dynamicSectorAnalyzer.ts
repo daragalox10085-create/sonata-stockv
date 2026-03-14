@@ -200,7 +200,8 @@ export class DynamicSectorAnalyzer {
       return scoredSectors;
         
     } catch (error) {
-      console.error('[板块分析] 获取失败，使用备用数据:', error);
+      console.warn('[板块分析] API获取失败，使用备用数据:', error);
+      // 返回备用数据，不抛出错误，确保用户体验
       return this.fallbackSectors.slice(0, limit);
     }
   }

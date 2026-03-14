@@ -147,6 +147,14 @@ export class StockSelector {
     return true;
   }
 
+  /**
+   * 计算六因子得分
+   * 所有动量评分统一使用年化收益率标准化，确保不同时间周期可比
+   * @param q - 股票报价数据
+   * @param distSupport - 距离支撑位百分比
+   * @param upSpace - 上涨空间百分比
+   * @returns 六因子得分对象
+   */
   private calculateFactors(q: StockQuote, distSupport: number, upSpace: number) {
     // 估值因子（30%）- 越低越好
     let valuation = 50;
@@ -171,40 +179,55 @@ export class StockSelector {
     let scale = 60;
     if (q.marketCap > 1000_0000_0000) scale = 90;  // >1000亿
     
-    // 动量因子（15%）- 基于实际价格动量计算
-    // 优先使用20日/60日涨跌幅，其次使用当日涨跌幅
+    // 动量因子（15%）- 使用年化收益率标准化
     let momentum = 50;
     
-    // 20日涨跌幅评分（如果有数据）
+    /**
+     * 将涨跌幅转换为年化收益率
+     * @param changePercent - 期间涨跌幅 (%)
+     * @param days - 期间天数
+     * @returns 年化收益率 (%)
+     */
+    const annualizeReturn = (changePercent: number, days: number): number => {
+      return (Math.pow(1 + changePercent / 100, 252 / days) - 1) * 100;
+    };
+    
+    /**
+     * 根据年化收益率评分 (统一标准)
+     * @param annualizedReturn - 年化收益率 (%)
+     * @returns 动量得分调整值
+     */
+    const scoreByAnnualizedReturn = (annualizedReturn: number): number => {
+      if (annualizedReturn > 50) return 25;
+      if (annualizedReturn > 30) return 20;
+      if (annualizedReturn > 15) return 15;
+      if (annualizedReturn > 5) return 10;
+      if (annualizedReturn > -5) return 5;
+      if (annualizedReturn > -15) return -5;
+      return -10;
+    };
+    
+    // 优先使用20日涨跌幅（年化）
     if (q.twentyDayChange !== undefined) {
-      if (q.twentyDayChange > 20) momentum += 25;
-      else if (q.twentyDayChange > 10) momentum += 20;
-      else if (q.twentyDayChange > 5) momentum += 15;
-      else if (q.twentyDayChange > 0) momentum += 10;
-      else if (q.twentyDayChange > -5) momentum += 5;
-      else momentum -= 10;
+      const annualized20d = annualizeReturn(q.twentyDayChange, 20);
+      momentum += scoreByAnnualizedReturn(annualized20d);
     }
-    // 60日涨跌幅评分（如果有数据）
+    // 其次使用60日涨跌幅（年化）
     else if (q.sixtyDayChange !== undefined) {
-      if (q.sixtyDayChange > 30) momentum += 20;
-      else if (q.sixtyDayChange > 15) momentum += 15;
-      else if (q.sixtyDayChange > 5) momentum += 10;
-      else if (q.sixtyDayChange > -5) momentum += 5;
-      else momentum -= 5;
+      const annualized60d = annualizeReturn(q.sixtyDayChange, 60);
+      momentum += scoreByAnnualizedReturn(annualized60d);
     }
-    // 当日涨跌幅评分（备选）
+    // 最后使用当日涨跌幅（年化，假设1天）
     else if (q.changePercent !== undefined) {
-      if (q.changePercent > 5) momentum += 15;
-      else if (q.changePercent > 2) momentum += 10;
-      else if (q.changePercent > 0) momentum += 5;
-      else if (q.changePercent > -2) momentum += 0;
-      else momentum -= 5;
+      const annualized1d = annualizeReturn(q.changePercent, 1);
+      // 单日波动大，降低权重
+      momentum += scoreByAnnualizedReturn(annualized1d) * 0.5;
     }
     
     // 成交量验证（如果有数据）
     // 上涨时放量 = 确认动量；上涨时缩量 = 动量存疑
     if (q.volume !== undefined && q.volume > 1000000) {
-      momentum += 5;  // 有成交量数据且充足，加分
+      momentum += 5;
     }
     
     // 质量因子（10%）
@@ -228,12 +251,12 @@ export class StockSelector {
     if (distSupport < 0) support += Math.min(15, Math.abs(distSupport) * 2);
     
     return {
-      valuation: Math.min(100, valuation),
-      growth: Math.min(100, growth),
-      scale: Math.min(100, scale),
-      momentum: Math.min(100, momentum),
-      quality: Math.min(100, quality),
-      support: Math.min(100, support)
+      valuation: Math.min(100, Math.max(0, valuation)),
+      growth: Math.min(100, Math.max(0, growth)),
+      scale: Math.min(100, Math.max(0, scale)),
+      momentum: Math.min(100, Math.max(0, momentum)),
+      quality: Math.min(100, Math.max(0, quality)),
+      support: Math.min(100, Math.max(0, support))
     };
   }
 

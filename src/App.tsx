@@ -1,5 +1,15 @@
 /**
- * Sonata V2.4 - 金色主题专业股票分析终端
+ * Sonata V2.0 - 专业股票分析终端
+ * 
+ * 版本历史:
+ * V2.0 (2026-03-14) - 全面修复版
+ *   - 修复核心算法 (RSI、布林带、夏普比率、盈亏比)
+ *   - 修复导出长图和导出PDF功能
+ *   - 修复K线图数据一致性
+ *   - 优化数字格式化 (2位小数)
+ *   - 增强股票代码验证
+ * 
+ * V1.0 - 初始版本
  */
 
 import { useState, useRef } from 'react';
@@ -33,51 +43,109 @@ function AppContent() {
 
   // 导出长图
   const handleExportLongImage = async () => {
-    if (!contentRef.current || !stockData) { alert('请先加载股票数据'); return; }
+    console.log('[导出长图] 开始导出...');
+    
+    if (!contentRef.current) {
+      console.error('[导出长图] contentRef.current 为空');
+      alert('页面内容未加载完成，请稍后重试');
+      return;
+    }
+    
+    if (!stockData) {
+      console.error('[导出长图] stockData 为空');
+      alert('请先加载股票数据');
+      return;
+    }
     
     const originalExpanded = { ...expandedModules };
     
     try {
       setDownloadProgress(0);
+      
+      // 展开所有模块
       setExpandedModules({ prediction: true, market: true });
-      await new Promise(resolve => setTimeout(resolve, 500));
+      console.log('[导出长图] 已展开所有模块');
+      
+      // 等待DOM更新
+      await new Promise(resolve => setTimeout(resolve, 800));
       
       const element = contentRef.current;
+      console.log('[导出长图] 目标元素:', element);
+      console.log('[导出长图] 元素尺寸:', element.scrollWidth, 'x', element.scrollHeight);
+      
+      // 保存原始样式
       const originalWidth = element.style.width;
+      const originalHeight = element.style.height;
+      const originalOverflow = element.style.overflow;
+      
+      // 设置固定宽度以确保一致性
       element.style.width = '1200px';
+      element.style.height = 'auto';
+      element.style.overflow = 'visible';
+      
+      setDownloadProgress(20);
+      
+      // 等待样式应用
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      console.log('[导出长图] 开始生成canvas...');
       
       const canvas = await html2canvas(element, { 
         scale: 2, 
         useCORS: true, 
         backgroundColor: '#ffffff',
-        logging: false,
+        logging: true, // 开启调试日志
         windowWidth: 1200,
         width: 1200,
         height: element.scrollHeight,
         x: 0,
         y: 0,
         scrollX: 0,
-        scrollY: -window.scrollY
+        scrollY: 0, // 修正scrollY
+        onclone: (clonedDoc) => {
+          console.log('[导出长图] DOM已克隆');
+        }
       });
       
+      console.log('[导出长图] Canvas生成成功:', canvas.width, 'x', canvas.height);
+      
+      // 恢复原始样式
       element.style.width = originalWidth;
+      element.style.height = originalHeight;
+      element.style.overflow = originalOverflow;
+      
       setDownloadProgress(60);
       
       // 下载 PNG
       const link = document.createElement('a');
-      link.download = `${stockData.name}_${stockData.symbol}_Sonata 分析报告.png`;
-      link.href = canvas.toDataURL('image/png');
+      const fileName = `${stockData.name || stockData.symbol}_${stockData.symbol}_Sonata分析报告.png`;
+      link.download = fileName;
+      console.log('[导出长图] 文件名:', fileName);
+      
+      // 转换为DataURL
+      const dataUrl = canvas.toDataURL('image/png');
+      console.log('[导出长图] DataURL长度:', dataUrl.length);
+      
+      link.href = dataUrl;
+      
+      // 触发下载
+      document.body.appendChild(link);
       link.click();
+      document.body.removeChild(link);
+      
+      console.log('[导出长图] 下载已触发');
       
       setDownloadProgress(100);
+      
       setTimeout(() => {
         setDownloadProgress(null);
         setExpandedModules(originalExpanded);
-      }, 1000);
+        console.log('[导出长图] 导出完成');
+      }, 1500);
       
     } catch (error) {
-      console.error('导出失败:', error);
-      alert('导出失败');
+      console.error('[导出长图] 导出失败:', error);
+      alert('导出失败: ' + (error instanceof Error ? error.message : '未知错误'));
       setDownloadProgress(null);
       setExpandedModules(originalExpanded);
     }
@@ -85,59 +153,126 @@ function AppContent() {
 
   // 导出 PDF
   const handleExportPDF = async () => {
-    if (!contentRef.current || !stockData) { alert('请先加载股票数据'); return; }
+    console.log('[导出PDF] 开始导出...');
+    
+    if (!contentRef.current) {
+      console.error('[导出PDF] contentRef.current 为空');
+      alert('页面内容未加载完成，请稍后重试');
+      return;
+    }
+    
+    if (!stockData) {
+      console.error('[导出PDF] stockData 为空');
+      alert('请先加载股票数据');
+      return;
+    }
     
     const originalExpanded = { ...expandedModules };
     
     try {
       setDownloadProgress(0);
+      
+      // 展开所有模块
       setExpandedModules({ prediction: true, market: true });
-      await new Promise(resolve => setTimeout(resolve, 500));
+      console.log('[导出PDF] 已展开所有模块');
+      
+      // 等待DOM更新
+      await new Promise(resolve => setTimeout(resolve, 800));
       
       const element = contentRef.current;
+      console.log('[导出PDF] 目标元素:', element);
+      
+      // 保存原始样式
       const originalWidth = element.style.width;
+      const originalHeight = element.style.height;
+      const originalOverflow = element.style.overflow;
+      
+      // 设置固定宽度
       element.style.width = '1200px';
+      element.style.height = 'auto';
+      element.style.overflow = 'visible';
+      
+      setDownloadProgress(20);
+      
+      // 等待样式应用
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      console.log('[导出PDF] 开始生成canvas...');
       
       const canvas = await html2canvas(element, { 
         scale: 2, 
         useCORS: true, 
         backgroundColor: '#ffffff',
-        logging: false,
+        logging: true,
         windowWidth: 1200,
         width: 1200,
         height: element.scrollHeight,
         x: 0,
         y: 0,
         scrollX: 0,
-        scrollY: -window.scrollY
+        scrollY: 0
       });
       
+      console.log('[导出PDF] Canvas生成成功:', canvas.width, 'x', canvas.height);
+      
+      // 恢复原始样式
       element.style.width = originalWidth;
+      element.style.height = originalHeight;
+      element.style.overflow = originalOverflow;
+      
       setDownloadProgress(60);
       
       // 生成 PDF
+      console.log('[导出PDF] 开始生成PDF...');
+      
       const imgData = canvas.toDataURL('image/jpeg', 0.95);
       const pdfWidth = 210; // A4 宽度 mm
       const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
       
+      console.log('[导出PDF] PDF尺寸:', pdfWidth, 'x', pdfHeight, 'mm');
+      
       const pdf = new jsPDF({
-        orientation: pdfHeight > pdfWidth ? 'portrait' : 'landscape',
+        orientation: pdfHeight > 297 ? 'portrait' : 'portrait', // 如果超过A4高度，使用纵向
         unit: 'mm',
-        format: [pdfWidth, pdfHeight]
+        format: 'a4' // 使用标准A4，自动分页
       });
       
-      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
-      pdf.save(`${stockData.name}_${stockData.symbol}_Sonata 分析报告.pdf`);
+      // 计算分页
+      const pageHeight = 297; // A4高度 mm
+      const imgHeight = (canvas.height * pdfWidth) / canvas.width;
+      let heightLeft = imgHeight;
+      let position = 0;
+      
+      // 添加第一页
+      pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, imgHeight);
+      heightLeft -= pageHeight;
+      
+      // 如果内容超过一页，添加更多页
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, imgHeight);
+        heightLeft -= pageHeight;
+      }
+      
+      const fileName = `${stockData.name || stockData.symbol}_${stockData.symbol}_Sonata分析报告.pdf`;
+      console.log('[导出PDF] 文件名:', fileName);
+      
+      pdf.save(fileName);
+      
+      console.log('[导出PDF] 下载已触发');
       
       setDownloadProgress(100);
+      
       setTimeout(() => {
         setDownloadProgress(null);
         setExpandedModules(originalExpanded);
-      }, 1000);
+        console.log('[导出PDF] 导出完成');
+      }, 1500);
       
     } catch (error) {
-      console.error('导出失败:', error);
-      alert('导出失败');
+      console.error('[导出PDF] 导出失败:', error);
+      alert('导出失败: ' + (error instanceof Error ? error.message : '未知错误'));
       setDownloadProgress(null);
       setExpandedModules(originalExpanded);
     }
