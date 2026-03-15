@@ -49,488 +49,252 @@ function getMarketPrefix(symbol: string): 'sh' | 'sz' {
 const stockNameMap: Record<string, string> = {
   '600519': '贵州茅台',
   '000858': '五粮液',
-  '002594': '比亚迪',
   '300750': '宁德时代',
+  '002594': '比亚迪',
   '510300': '沪深 300ETF',
   '513310': '中韩半导体 ETF'
 };
 
+// 股票总股本映射（用于市值计算）
+const stockTotalSharesMap: Record<string, number> = {
+  '600519': 1250000000,
+  '000858': 3880000000,
+  '300750': 4400000000,
+  '002594': 2900000000,
+  '510300': 8000000000,
+  '513310': 1000000000
+};
+
 export class UnifiedStockDataService {
   /**
-   * 获取股票实时行情 - 3 级冗余
+   * 获取股票实时行情
+   * 优先级：东方财富 > 腾讯 > 新浪（东方财富有完整财务指标）
    */
-  async fetchStockQuote(symbol: string): Promise<StockQuote | null> {
-    console.log(`[UnifiedStockData] 开始获取 ${symbol} 行情数据`);
-    
-    // 第 1 层：腾讯财经
+  async fetchQuote(symbol: string): Promise<StockQuote | null> {
     try {
-      const tencentData = await this.fetchFromTencent(symbol);
-      if (tencentData) {
-        console.log(`[UnifiedStockData] ✅ 腾讯财经成功：${symbol}`);
-        return tencentData;
+      // 1. 尝试东方财富（优先，有完整财务指标）
+      const eastmoneyQuote = await this.fetchEastmoneyQuote(symbol);
+      if (eastmoneyQuote) {
+        console.log('[统一数据服务] 东方财富行情成功');
+        return eastmoneyQuote;
       }
-    } catch (error) {
-      console.warn(`[UnifiedStockData] 腾讯财经失败：${symbol}`, error);
-    }
-    
-    // 第 2 层：东方财富
-    try {
-      const eastmoneyData = await this.fetchFromEastmoney(symbol);
-      if (eastmoneyData) {
-        console.log(`[UnifiedStockData] ✅ 东方财富成功：${symbol}`);
-        return eastmoneyData;
+
+      // 2. 尝试腾讯财经
+      const tencentQuote = await this.fetchTencentQuote(symbol);
+      if (tencentQuote) {
+        console.log('[统一数据服务] 腾讯行情成功');
+        return tencentQuote;
       }
-    } catch (error) {
-      console.warn(`[UnifiedStockData] 东方财富失败：${symbol}`, error);
-    }
-    
-    // 第 3 层：新浪财经
-    try {
-      const sinaData = await this.fetchFromSina(symbol);
-      if (sinaData) {
-        console.log(`[UnifiedStockData] ✅ 新浪财经成功：${symbol}`);
-        return sinaData;
+
+      // 3. 尝试新浪财经
+      const sinaQuote = await this.fetchSinaQuote(symbol);
+      if (sinaQuote) {
+        console.log('[统一数据服务] 新浪财经行情成功');
+        return sinaQuote;
       }
+
+      console.warn('[统一数据服务] 所有 API 失败');
+      return null;
     } catch (error) {
-      console.warn(`[UnifiedStockData] 新浪财经失败：${symbol}`, error);
+      console.error('[统一数据服务] 获取行情失败:', error);
+      return null;
     }
-    
-    console.error(`[UnifiedStockData] ❌ 所有 API 失败：${symbol}`);
-    return null;
   }
 
   /**
-   * 获取 K 线数据 - 2 级冗余 + 交叉验证
-   * 优先使用腾讯 API，获取一年数据（240个交易日）
+   * 腾讯财经 API - 获取实时行情
    */
-  async fetchKLineData(symbol: string, days: number = 240): Promise<KLinePoint[] | null> {
-    console.log(`[UnifiedStockData] 开始获取 ${symbol} K 线数据，天数：${days}`);
-    
-    // 同时获取两个数据源进行交叉验证
-    let tencentKLine: KLinePoint[] | null = null;
-    let eastmoneyKLine: KLinePoint[] | null = null;
-    
-    // 第 1 层：腾讯 K 线（优先）
-    try {
-      tencentKLine = await this.fetchKLineFromTencent(symbol, days);
-      if (tencentKLine && tencentKLine.length > 0) {
-        console.log(`[UnifiedStockData] ✅ 腾讯 K 线成功：${symbol}, ${tencentKLine.length}条`);
-      }
-    } catch (error) {
-      console.warn(`[UnifiedStockData] 腾讯 K 线失败：${symbol}`, error);
-    }
-    
-    // 第 2 层：东方财富 K 线（备用+验证）
-    try {
-      eastmoneyKLine = await this.fetchKLineFromEastmoney(symbol, days);
-      if (eastmoneyKLine && eastmoneyKLine.length > 0) {
-        console.log(`[UnifiedStockData] ✅ 东方财富 K 线成功：${symbol}, ${eastmoneyKLine.length}条`);
-      }
-    } catch (error) {
-      console.warn(`[UnifiedStockData] 东方财富 K 线失败：${symbol}`, error);
-    }
-    
-    // 交叉验证
-    if (tencentKLine && eastmoneyKLine && tencentKLine.length > 0 && eastmoneyKLine.length > 0) {
-      const validation = this.validateKLineData(tencentKLine, eastmoneyKLine, symbol);
-      if (validation.isValid) {
-        console.log(`[UnifiedStockData] ✅ 交叉验证通过，使用腾讯数据：${symbol}`);
-        return tencentKLine;
-      } else {
-        console.warn(`[UnifiedStockData] ⚠️ 交叉验证失败：${validation.reason}，使用东方财富数据`);
-        return eastmoneyKLine;
-      }
-    }
-    
-    // 返回可用的数据
-    if (tencentKLine && tencentKLine.length > 0) return tencentKLine;
-    if (eastmoneyKLine && eastmoneyKLine.length > 0) return eastmoneyKLine;
-    
-    console.error(`[UnifiedStockData] ❌ 所有 K 线 API 失败：${symbol}`);
-    return null;
-  }
-  
-  /**
-   * K线数据交叉验证
-   */
-  private validateKLineData(
-    tencentData: KLinePoint[], 
-    eastmoneyData: KLinePoint[], 
-    symbol: string
-  ): { isValid: boolean; reason?: string } {
-    // 1. 检查数据条数差异
-    const countDiff = Math.abs(tencentData.length - eastmoneyData.length);
-    if (countDiff > 5) {
-      return { isValid: false, reason: `数据条数差异过大: 腾讯${tencentData.length} vs 东方财富${eastmoneyData.length}` };
-    }
-    
-    // 2. 检查最新价格差异（取最近5天的平均差异）
-    const sampleSize = Math.min(5, tencentData.length, eastmoneyData.length);
-    let totalDiffPercent = 0;
-    
-    for (let i = 0; i < sampleSize; i++) {
-      const tencentPrice = tencentData[tencentData.length - 1 - i].close;
-      const eastmoneyPrice = eastmoneyData[eastmoneyData.length - 1 - i].close;
-      const diffPercent = Math.abs(tencentPrice - eastmoneyPrice) / tencentPrice * 100;
-      totalDiffPercent += diffPercent;
-    }
-    
-    const avgDiffPercent = totalDiffPercent / sampleSize;
-    if (avgDiffPercent > 2) { // 允许2%的差异
-      return { isValid: false, reason: `价格差异过大: ${avgDiffPercent.toFixed(2)}%` };
-    }
-    
-    console.log(`[UnifiedStockData] ✅ ${symbol} 交叉验证通过，价格差异: ${avgDiffPercent.toFixed(2)}%`);
-    return { isValid: true };
-  }
-
-  // ===== 腾讯财经 =====
-  private async fetchFromTencent(symbol: string): Promise<StockQuote | null> {
-    const url = API_CONFIG.TENCENT.quoteUrl(symbol);
-    const response = await fetch(url, { 
-      method: 'GET',
-      headers: { 'Accept': '*/*' }
-    });
-    
-    if (!response.ok) {
-      console.log(`[腾讯行情] HTTP ${response.status}`);
-      return null;
-    }
-    
-    const text = await response.text();
-    console.log(`[腾讯行情] 响应：${text.substring(0, 100)}...`);
-    
-    const match = text.match(/v_(sh|sz)\d+="([^"]+)"/);
-    if (!match) {
-      console.log('[腾讯行情] 正则匹配失败');
-      return null;
-    }
-    
-    const parts = match[2].split('~');
-    if (parts.length < 30) return null;
-    
-    const currentPrice = parseFloat(parts[3]);
-    const close = parseFloat(parts[4]);
-    if (isNaN(currentPrice) || currentPrice <= 0) return null;
-    
-    const change = currentPrice - close;
-    const changePercent = (change / close) * 100;
-    
-    return {
-      code: symbol,
-      name: parts[2] || stockNameMap[symbol] || '',
-      currentPrice,
-      change,
-      changePercent,
-      open: parseFloat(parts[5]),
-      high: parseFloat(parts[33]) || currentPrice * 1.02,
-      low: parseFloat(parts[34]) || currentPrice * 0.98,
-      volume: parseInt(parts[7]) || 0,
-      marketCap: (parseFloat(parts[15]) || parseFloat(parts[14]) || 0) * 10000, // 转换为元（API返回单位是万）
-      pe: 0,
-      peg: 0,
-      pb: 0,
-      roe: 0,
-      profitGrowth: 0,
-      revenueGrowth: 0,
-      source: 'tencent',
-      timestamp: new Date().toISOString()
-    };
-  }
-
-  // ===== 东方财富 =====
-  private async fetchFromEastmoney(symbol: string): Promise<StockQuote | null> {
-    const url = API_CONFIG.EASTMONEY.quoteUrl(symbol);
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: { 'Accept': 'application/json' }
-    });
-    
-    if (!response.ok) {
-      console.log(`[东方财富行情] HTTP ${response.status}`);
-      return null;
-    }
-    
-    const json = await response.json();
-    const data = json.data;
-    if (!data) {
-      console.log('[东方财富行情] 无 data 字段');
-      return null;
-    }
-    
-    const currentPrice = data.f43 ? data.f43 / 100 : 0;
-    if (currentPrice <= 0) return null;
-    
-    return {
-      code: symbol,
-      name: data.f58 || stockNameMap[symbol] || '',
-      currentPrice,
-      change: data.f44 ? data.f44 / 100 : 0,
-      changePercent: data.f45 ? data.f45 / 100 : 0,
-      open: data.f46 ? data.f46 / 100 : 0,
-      high: data.f47 ? data.f47 / 100 : 0,
-      low: data.f48 ? data.f48 / 100 : 0,
-      volume: data.f47 || 0,
-      marketCap: data.f49 ? data.f49 * 100000000 : 0,
-      pe: data.f162 || 0,
-      peg: data.f163 || 0,
-      pb: data.f167 || 0,
-      roe: data.f164 || 0,
-      profitGrowth: data.f169 || 0,
-      revenueGrowth: data.f170 || 0,
-      source: 'eastmoney',
-      timestamp: new Date().toISOString()
-    };
-  }
-
-  // ===== 新浪财经 =====
-  private async fetchFromSina(symbol: string): Promise<StockQuote | null> {
-    const url = API_CONFIG.SINA.quoteUrl(symbol);
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: { 
-        'Accept': '*/*',
-        'Referer': 'https://finance.sina.com.cn'
-      }
-    });
-    
-    if (!response.ok) return null;
-    
-    const text = await response.text();
-    const match = text.match(/var hq_str_(?:sh|sz)\d+="([^"]*)"/);
-    if (!match || !match[1]) return null;
-    
-    const fields = match[1].split(',');
-    if (fields.length < 8) return null;
-    
-    const currentPrice = parseFloat(fields[3]);
-    if (isNaN(currentPrice) || currentPrice <= 0) return null;
-    
-    const close = parseFloat(fields[2]);
-    const change = currentPrice - close;
-    const changePercent = (change / close) * 100;
-    
-    return {
-      code: symbol,
-      name: fields[0] || stockNameMap[symbol] || '',
-      currentPrice,
-      change,
-      changePercent,
-      open: parseFloat(fields[1]),
-      high: parseFloat(fields[4]),
-      low: parseFloat(fields[5]),
-      volume: parseInt(fields[8]) || 0,
-      marketCap: 0,
-      pe: 0,
-      peg: 0,
-      pb: 0,
-      roe: 0,
-      profitGrowth: 0,
-      revenueGrowth: 0,
-      source: 'sina',
-      timestamp: new Date().toISOString()
-    };
-  }
-
-  // ===== K 线数据 =====
-  private async fetchKLineFromEastmoney(symbol: string, days: number): Promise<KLinePoint[] | null> {
-    try {
-      // 修正 secid 格式：6 开头=沪市=1.xxx，0/3/5 开头=深市=0.xxx，ETF 特殊处理
-      let secid: string;
-      if (symbol.startsWith('6')) {
-        secid = `1.${symbol}`; // 沪市
-      } else if (symbol.startsWith('0') || symbol.startsWith('3')) {
-        secid = `0.${symbol}`; // 深市
-      } else if (symbol.startsWith('5')) {
-        secid = `1.${symbol}`; // 沪市 ETF
-      } else {
-        secid = `0.${symbol}`; // 默认深市
-      }
-      
-      // 计算日期范围
-      const endDate = new Date();
-      const startDate = new Date();
-      startDate.setDate(startDate.getDate() - days);
-      const beg = startDate.toISOString().slice(0, 10).replace(/-/g, '');
-      const end = endDate.toISOString().slice(0, 10).replace(/-/g, '');
-      
-      const url = `/api/eastmoney/kline?secid=${secid}&klt=101&fqt=1&beg=${beg}&end=${end}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60`;
-      
-      console.log(`[K 线 - 东方财富] 请求：${url}`);
-      
-      const response = await fetch(url);
-      console.log(`[K 线 - 东方财富] 状态：${response.status}`);
-      
-      if (!response.ok) return null;
-      
-      const json = await response.json();
-      console.log(`[K 线 - 东方财富] klines: ${json.data?.klines?.length || 0}条`);
-      
-      const klines = json.data?.klines;
-      if (!klines || !Array.isArray(klines)) return null;
-      
-      return klines.map((item: string) => {
-        const parts = item.split(',');
-        return {
-          date: parts[0],
-          open: parseFloat(parts[1]),
-          close: parseFloat(parts[2]),
-          high: parseFloat(parts[3]),
-          low: parseFloat(parts[4]),
-          volume: parseInt(parts[5]) || 0
-        };
-      }).filter(k => !isNaN(k.open) && !isNaN(k.close) && k.open > 0);
-    } catch (error) {
-      console.error('[K 线 - 东方财富] 错误:', error);
-      return null;
-    }
-  }
-
-  private async fetchKLineFromTencent(symbol: string, days: number): Promise<KLinePoint[] | null> {
+  private async fetchTencentQuote(symbol: string): Promise<StockQuote | null> {
     try {
       const market = getMarketPrefix(symbol);
-      const code = `${market}${symbol}`;
-      
-      // 使用腾讯 FQ K 线 API
-      // 格式: param=sz002594,day,2025-01-01,2026-03-13,240,qfq
-      const endDate = new Date();
-      const startDate = new Date();
-      startDate.setDate(startDate.getDate() - days);
-      
-      const startStr = startDate.toISOString().slice(0, 10);
-      const endStr = endDate.toISOString().slice(0, 10);
-      
-      // 腾讯 FQ K 线 API - 使用正确的 URL 格式
-      const url = `/api/tencent/kline?code=${code}&start=${startStr}&end=${endStr}&limit=${days}&adjust=qfq`;
-      
-      console.log(`[K 线 - 腾讯] 请求：${url}`);
+      const url = `/api/tencent/quote?q=${market}${symbol}`;
       
       const response = await fetch(url);
-      console.log(`[K 线 - 腾讯] 状态：${response.status}`);
-      
       if (!response.ok) return null;
       
       const json = await response.json();
-      
-      // 腾讯返回格式: data[code].qfqday
-      const klineData = json.data?.[code]?.qfqday;
-      
-      if (!klineData || !Array.isArray(klineData)) {
-        console.warn('[K 线 - 腾讯] 无 K 线数据:', code, json);
-        return null;
-      }
-      
-      console.log(`[K 线 - 腾讯] ✅ 成功：${klineData.length} 条`);
-      
-      return klineData.map((item: string[]) => ({
-        date: item[0],
-        open: parseFloat(item[1]),
-        close: parseFloat(item[2]),
-        high: parseFloat(item[3]),
-        low: parseFloat(item[4]),
-        volume: parseInt(item[5]) || 0
-      })).filter(k => !isNaN(k.open) && !isNaN(k.close) && k.open > 0);
+      const data = json.data?.[`${market}${symbol}`];
+      if (!data) return null;
+
+      return {
+        code: symbol,
+        symbol: symbol,
+        name: data.name || symbol,
+        currentPrice: data.price || 0,
+        change: data.price - data.open || 0,
+        changePercent: data.change_percent || 0,
+        open: data.open || 0,
+        high: data.high || 0,
+        low: data.low || 0,
+        close: data.prev_close || 0,
+        pe: data.pe || 0,
+        peg: 0,
+        pb: data.pb || 0,
+        roe: 0,
+        profitGrowth: 0,
+        revenueGrowth: 0,
+        marketCap: data.total_market_cap || data.market_cap || 0,
+        totalShares: stockTotalSharesMap[symbol],
+        source: 'tencent',
+        timestamp: new Date().toISOString()
+      };
     } catch (error) {
-      console.error('[K 线 - 腾讯] 错误:', error);
+      console.warn('[腾讯行情] 获取失败:', error);
       return null;
     }
   }
 
-  // ===== 获取指定周期K线数据 =====
-  async fetchKLineDataByPeriod(
-    symbol: string, 
-    period: '60' | '240' | '101' | '102' = '101',
-    days: number = 90
-  ): Promise<KLinePoint[] | null> {
+  /**
+   * 东方财富 API - 获取实时行情（增强版，包含财务指标）
+   */
+  private async fetchEastmoneyQuote(symbol: string): Promise<StockQuote | null> {
     try {
-      // 修正 secid 格式：6 开头=沪市=1.xxx，0/3 开头=深市=0.xxx，5 开头=沪市 ETF=1.xxx
-      let secid: string;
-      if (symbol.startsWith('6')) {
-        secid = `1.${symbol}`; // 沪市
-      } else if (symbol.startsWith('0') || symbol.startsWith('3')) {
-        secid = `0.${symbol}`; // 深市
-      } else if (symbol.startsWith('5')) {
-        secid = `1.${symbol}`; // 沪市 ETF
-      } else {
-        secid = `0.${symbol}`; // 默认深市
-      }
-      
-      // 计算日期范围 - 不同周期需要不同的天数倍数
-      const periodMultiplier: Record<string, number> = {
-        '60': 24,    // 1小时线，每天4条（交易4小时），需要更多天数
-        '240': 6,    // 4小时线，每天1条
-        '101': 1,    // 日线
-        '102': 0.2   // 周线，每周1条
-      };
-      
-      const multiplier = periodMultiplier[period] || 1;
-      const endDate = new Date();
-      const startDate = new Date();
-      startDate.setDate(startDate.getDate() - Math.ceil(days * multiplier));
-      const beg = startDate.toISOString().slice(0, 10).replace(/-/g, '');
-      const end = endDate.toISOString().slice(0, 10).replace(/-/g, '');
-      
-      const periodNames: Record<string, string> = {
-        '60': '1小时',
-        '240': '4小时',
-        '101': '日线',
-        '102': '周线'
-      };
-      
-      // klt参数：60=1小时, 240=4小时, 101=日线, 102=周线
-      const url = `/api/eastmoney/kline?secid=${secid}&klt=${period}&fqt=1&beg=${beg}&end=${end}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60`;
-      
-      console.log(`[${periodNames[period]}K线 - 东方财富] 请求：${url}`);
+      const secid = symbol.startsWith('6') ? `1.${symbol}` : `0.${symbol}`;
+      // 扩展字段：添加财务指标字段
+      const url = `/api/eastmoney/quote?secid=${secid}&fields=f9,f43,f44,f45,f46,f47,f48,f49,f57,f58,f60,f116,f152,f162,f163,f164,f169,f170`;
       
       const response = await fetch(url);
-      console.log(`[${periodNames[period]}K线 - 东方财富] 状态：${response.status}`);
-      
       if (!response.ok) return null;
       
       const json = await response.json();
-      console.log(`[${periodNames[period]}K线 - 东方财富] klines: ${json.data?.klines?.length || 0}条`);
-      
-      const klines = json.data?.klines;
-      if (!klines || !Array.isArray(klines)) return null;
-      
-      return klines.map((item: string) => {
-        const parts = item.split(',');
-        return {
-          date: parts[0],
-          open: parseFloat(parts[1]),
-          close: parseFloat(parts[2]),
-          high: parseFloat(parts[3]),
-          low: parseFloat(parts[4]),
-          volume: parseInt(parts[5]) || 0
-        };
-      }).filter(k => !isNaN(k.open) && !isNaN(k.close) && k.open > 0);
+      const data = json.data;
+      if (!data) return null;
+
+      return {
+        code: symbol,
+        symbol: symbol,
+        name: data.f58 || symbol,
+        currentPrice: data.f43 || 0,
+        change: (data.f43 - data.f44) || 0,
+        changePercent: data.f170 || 0,
+        open: data.f46 || 0,
+        high: data.f44 || 0,
+        low: data.f47 || 0,
+        close: data.f44 || 0,
+        // 财务指标
+        pe: data.f9 || 0,           // 市盈率
+        peTtm: data.f162 || 0,      // 市盈率TTM
+        ps: data.f163 || 0,         // 市销率
+        pb: data.f152 || 0,         // 市净率
+        roe: data.f164 || 0,        // ROE
+        profitGrowth: data.f169 || 0,  // 净利润增长率
+        revenueGrowth: data.f170 || 0, // 营收增长率
+        peg: data.f163 || 0,        // PEG（市销率作为近似）
+        marketCap: data.f116 || 0,
+        totalShares: stockTotalSharesMap[symbol],
+        source: 'eastmoney',
+        timestamp: new Date().toISOString()
+      };
     } catch (error) {
-      console.error(`[K线 - 东方财富] 错误:`, error);
+      console.warn('[东方财富行情] 获取失败:', error);
       return null;
     }
   }
 
-  // ===== 获取多周期K线数据（用于切换） =====
+  /**
+   * 新浪财经 API - 获取实时行情
+   */
+  private async fetchSinaQuote(symbol: string): Promise<StockQuote | null> {
+    try {
+      const market = getMarketPrefix(symbol);
+      const url = `/api/sina?list=${market}${symbol}`;
+      
+      const response = await fetch(url);
+      if (!response.ok) return null;
+      
+      const text = await response.text();
+      const match = text.match(/="([^"]+)"/);
+      if (!match) return null;
+
+      const parts = match[1].split(',');
+      if (parts.length < 32) return null;
+
+      return {
+        code: symbol,
+        symbol: symbol,
+        name: parts[0] || symbol,
+        currentPrice: parseFloat(parts[3]) || 0,
+        change: parseFloat(parts[8]) || 0,
+        changePercent: parseFloat(parts[32]) || 0,
+        open: parseFloat(parts[1]) || 0,
+        high: parseFloat(parts[4]) || 0,
+        low: parseFloat(parts[5]) || 0,
+        close: parseFloat(parts[2]) || 0,
+        pe: 0,
+        peg: 0,
+        pb: 0,
+        roe: 0,
+        profitGrowth: 0,
+        revenueGrowth: 0,
+        marketCap: parseFloat(parts[44]) || 0,
+        totalShares: stockTotalSharesMap[symbol],
+        source: 'sina',
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      console.warn('[新浪财经行情] 获取失败:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 获取 K 线数据（指定周期）
+   */
+  async fetchKLineDataByPeriod(symbol: string, timeframe: string, days: number): Promise<KLinePoint[] | null> {
+    try {
+      // 使用腾讯财经 API
+      const market = getMarketPrefix(symbol);
+      const url = `/api/tencent/kline?q=${market}${symbol}&period=${timeframe}&days=${days}`;
+      
+      const response = await fetch(url);
+      if (!response.ok) return null;
+      
+      const json = await response.json();
+      const data = json.data?.[`${market}${symbol}`]?.day;
+      if (!data || !Array.isArray(data)) return null;
+
+      return data.map((item: any[]) => ({
+        date: new Date(item[0] * 1000).toISOString().split('T')[0],
+        open: item[1],
+        high: item[3],
+        low: item[4],
+        close: item[2],
+        volume: item[5] || 0
+      })).filter((k: KLinePoint) => !isNaN(k.open) && k.open > 0);
+    } catch (error) {
+      console.warn('[K 线数据] 获取失败:', error);
+      return null;
+    }
+  }
+
+  // ===== 获取多周期 K 线数据（用于切换） =====
   async fetchMultiPeriodKLineData(symbol: string, days: number = 365): Promise<{
     '60': KLinePoint[];
+    '240': KLinePoint[];
     '101': KLinePoint[];
   } | null> {
     try {
-      // 获取数据：日线一年，小时线90天
-      const [k1h, k1d] = await Promise.all([
-        this.fetchKLineDataByPeriod(symbol, '60', 90),    // 1小时线：90天
-        this.fetchKLineDataByPeriod(symbol, '101', 365)  // 日线：一年
+      // 获取数据：日线一年，小时线 90 天
+      const [k1h, k4h, k1d] = await Promise.all([
+        this.fetchKLineDataByPeriod(symbol, '60', 90),    // 1 小时线：90 天
+        this.fetchKLineDataByPeriod(symbol, '240', 90),   // 4 小时线：90 天
+        this.fetchKLineDataByPeriod(symbol, '101', 365)   // 日线：一年
       ]);
       
       return {
         '60': k1h || [],
+        '240': k4h || [],
         '101': k1d || []
       };
     } catch (error) {
-      console.error('[多周期K线] 获取失败:', error);
+      console.error('[多周期 K 线] 获取失败:', error);
       return null;
     }
   }
+
+  // ===== 向后兼容的别名方法 =====
+  fetchStockQuote = this.fetchQuote;
+  fetchKLineData = this.fetchKLineDataByPeriod;
 }
 
 // 导出单例

@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { dynamicAnalysisService, StockRecommendation, HotSector, MonteCarloResult } from '../services/dynamicAnalysisService';
+import { dynamicAnalysisService, StockRecommendation } from '../services/dynamicAnalysisService';
+import { DynamicHotSector } from '../services/DynamicSectorAnalyzer';
 import { sectorService } from '../services/SectorService';
 import { screeningService } from '../services/ScreeningService';
 import { useStock } from '../contexts/StockContext';
 import { AlertCircle, Info } from 'lucide-react';
+import { AlgorithmParliament } from '../components/AlgorithmParliament';
+import { FinancialMetrics } from '../components/FinancialMetrics';
 
 interface WeeklyMarketAnalysisProps {
   showStockPicker?: boolean;
@@ -11,12 +14,10 @@ interface WeeklyMarketAnalysisProps {
 }
 
 export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ showStockPicker = true, currentPrice = 100 }) => {
-  const [hotSectors, setHotSectors] = useState<HotSector[]>([]);
+  const [hotSectors, setHotSectors] = useState<DynamicHotSector[]>([]);
   const [recommendations, setRecommendations] = useState<StockRecommendation[]>([]);
-  const [monteCarloResult, setMonteCarloResult] = useState<MonteCarloResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [showDerivation, setShowDerivation] = useState(false);
   const [showStockDerivation, setShowStockDerivation] = useState(false);
   
   // 资金流入筛选状态
@@ -66,10 +67,10 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
               factors: {
                 valuation: 65,
                 growth: 70,
-                scale: 75,
+                profitability: 75,
                 momentum: Math.round(stock.changePercent * 10 + 50),
                 quality: 68,
-                support: 60
+                technical: 60
               },
               metrics: {
                 pe: 25 + Math.random() * 20,
@@ -84,7 +85,7 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
                 distanceToSupport: Math.round((Math.random() * 20 - 5) * 10) / 10,
                 upwardSpace: Math.round((10 + Math.random() * 20) * 10) / 10
               },
-              recommendation: sector.score >= 80 ? '强烈推荐' : sector.score >= 70 ? '推荐' : '谨慎推荐',
+              recommendation: (sector.score >= 80 ? '强烈推荐' : sector.score >= 70 ? '推荐' : '谨慎推荐') as '强烈推荐' | '推荐' | '谨慎推荐' | '观望',
               analysis: `${stock.name}属于${sector.name}板块，${sector.trend}，具备较好的投资价值。`,
               sectorInfo: {
                 sectorCode: sector.code,
@@ -145,7 +146,7 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
               distanceToSupport: stock.distanceToSupport,
               upwardSpace: stock.upsidePotential
             },
-            recommendation: stock.recommendationLevel,
+            recommendation: stock.recommendationLevel as '强烈推荐' | '推荐' | '谨慎推荐' | '观望',
             analysis: stock.recommendationText,
             sectorInfo: {
               sectorCode: '',
@@ -182,10 +183,10 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
                       factors: {
                         valuation: 65,
                         growth: 70,
-                        scale: 75,
+                        profitability: 75,
                         momentum: Math.round(stock.changePercent * 10 + 50),
                         quality: 68,
-                        support: 60
+                        technical: 60
                       },
                       metrics: {
                         pe: 25 + Math.random() * 20,
@@ -200,7 +201,7 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
                         distanceToSupport: Math.round((Math.random() * 20 - 5) * 10) / 10,
                         upwardSpace: Math.round((10 + Math.random() * 20) * 10) / 10
                       },
-                      recommendation: sector.score >= 80 ? '强烈推荐' : sector.score >= 70 ? '推荐' : '谨慎推荐',
+                      recommendation: (sector.score >= 80 ? '强烈推荐' : sector.score >= 70 ? '推荐' : '谨慎推荐') as '强烈推荐' | '推荐' | '谨慎推荐' | '观望',
                       analysis: `${stock.name}属于${sector.name}板块，${sector.trend}，具备较好的投资价值。`,
                       sectorInfo: {
                         sectorCode: sector.code,
@@ -223,30 +224,9 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
           setRecommendations([]);
         }
       } else {
-        // 运行蒙特卡洛模拟（该股预测）- 使用真实K线数据
-        let historicalPrices: number[] = [];
-        
-        // 优先从StockContext获取真实K线数据
-        if (stockData?.kLineData && stockData.kLineData.length > 20) {
-          historicalPrices = stockData.kLineData.map(k => k.close);
-          console.log('[蒙特卡洛] 使用StockContext真实K线数据:', historicalPrices.length, '条');
-        } else if (stockData?.symbol) {
-          // 尝试从API获取
-          try {
-            const result = await dynamicAnalysisService.runMonteCarloForStock(stockData.symbol);
-            if (result) {
-              setMonteCarloResult(result);
-              return;
-            }
-          } catch (e) {
-            console.warn('[蒙特卡洛] API获取失败:', e);
-          }
-        }
-        
-        // 使用获取到的历史价格或传入当前价格
-        const priceToUse = stockData?.currentPrice || currentPrice;
-        const monteCarlo = await dynamicAnalysisService.runMonteCarlo(priceToUse, historicalPrices);
-        setMonteCarloResult(monteCarlo);
+        // 算法议会预测由 AlgorithmParliament 组件内部处理
+        // 无需在此加载数据
+        console.log('[WeeklyMarketAnalysis] 算法议会组件将自行加载预测数据');
       }
     } catch (error) {
       console.error('数据加载失败:', error);
@@ -289,75 +269,32 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-      {/* 蒙特卡洛预测 - 仅当 showStockPicker=false 时显示（该股预测） */}
-      {!showStockPicker && monteCarloResult && (
+      {/* 算法议会预测 - 仅当 showStockPicker=false 时显示（该股预测） */}
+      {!showStockPicker && stockData && (
         <div className="mb-8">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold text-gray-900">蒙特卡洛模拟预测</h3>
-            <button
-              onClick={() => setShowDerivation(!showDerivation)}
-              className="px-3 py-1.5 text-sm bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-md transition-colors font-medium flex items-center gap-1"
-            >
-              <Info size={14} />
-              {showDerivation ? '隐藏推导' : '推导详情'}
-            </button>
+          <AlgorithmParliament
+            stockSymbol={stockData.symbol}
+            stockName={stockData.name}
+            currentPrice={stockData.currentPrice}
+            priceChange={stockData.change}
+            priceChangePercent={stockData.changePercent}
+            timeHorizon={5}
+          />
+          
+          {/* 财务指标 */}
+          <div className="mt-6">
+            <FinancialMetrics
+              pe={stockData.pe}
+              peTtm={stockData.peTtm}
+              pb={stockData.pb}
+              ps={stockData.ps}
+              peg={stockData.peg}
+              roe={stockData.roe}
+              profitGrowth={stockData.profitGrowth}
+              revenueGrowth={stockData.revenueGrowth}
+              marketCap={stockData.marketCap}
+            />
           </div>
-
-          {/* 三种情景 */}
-          <div className="grid grid-cols-3 gap-4 mb-4">
-            {monteCarloResult.scenarios.map((scenario) => (
-              <div
-                key={scenario.type}
-                className={`p-4 rounded-lg border-2 ${
-                  scenario.type === '乐观' 
-                    ? 'bg-green-50 border-green-200' 
-                    : scenario.type === '基准' 
-                    ? 'bg-blue-50 border-blue-200' 
-                    : 'bg-red-50 border-red-200'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-700">{scenario.type}情景</span>
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${
-                    scenario.type === '乐观' 
-                      ? 'bg-green-200 text-green-800' 
-                      : scenario.type === '基准' 
-                      ? 'bg-blue-200 text-blue-800' 
-                      : 'bg-red-200 text-red-800'
-                  }`}>
-                    {scenario.probability}%
-                  </span>
-                </div>
-                <div className={`text-xl font-bold mb-1 ${
-                  scenario.type === '乐观' 
-                    ? 'text-green-600' 
-                    : scenario.type === '基准' 
-                    ? 'text-blue-600' 
-                    : 'text-red-600'
-                }`}>
-                  ¥{scenario.priceRange[0].toFixed(2)} - ¥{scenario.priceRange[1].toFixed(2)}
-                </div>
-                <div className="text-xs text-gray-500">
-                  预期收益: {scenario.expectedReturn > 0 ? '+' : ''}{scenario.expectedReturn}%
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* 推导过程 */}
-          {showDerivation && (
-            <div className="bg-slate-50 rounded-lg p-4 border border-slate-200">
-              <h4 className="text-sm font-semibold text-slate-800 mb-3">推导过程</h4>
-              <div className="space-y-2">
-                {monteCarloResult.derivationSteps.map((step, idx) => (
-                  <div key={idx} className="flex items-start gap-2 text-sm">
-                    <span className="text-slate-400">{idx + 1}.</span>
-                    <span className="text-slate-600">{step}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
       )}
 

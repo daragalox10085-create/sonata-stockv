@@ -19,6 +19,7 @@ export interface Sector {
 }
 
 export interface HotSector extends Sector {
+  score: number;  // 综合评分
   isHotSpot: boolean;
   isContinuousHot: boolean;
   recommendation: string;

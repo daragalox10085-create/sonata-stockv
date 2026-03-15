@@ -20,7 +20,6 @@ interface StockChart4HProps {
     '60': KLinePoint[];
     '240': KLinePoint[];
     '101': KLinePoint[];
-    '102': KLinePoint[];
   };
   currentTimeframe?: KLineTimeframe;
   onTimeframeChange?: (timeframe: KLineTimeframe) => void;
@@ -38,7 +37,7 @@ export default function StockChart4H({
   dataSource,
   updateTime,
   multiTimeframeData,
-  currentTimeframe = '240',
+  currentTimeframe = '60',
   onTimeframeChange
 }: StockChart4HProps) {
   const chartRef = useRef<HTMLDivElement>(null);
@@ -70,11 +69,11 @@ export default function StockChart4H({
     // 准备数据
     const dates = chartData.map(item => {
       // 根据周期格式化日期显示
-      if (currentTimeframe === '60' || currentTimeframe === '240') {
+      if (currentTimeframe === '60') {
         // 小时线显示 MM-DD HH:mm
         return item.date.substring(5, 16); // 显示 "03-13 14:30"
       }
-      return item.date.substring(5); // 日线/周线显示 MM-DD
+      return item.date.substring(5); // 日线显示 MM-DD
     });
     const kLineData = chartData.map(item => [
       item.open,
@@ -567,6 +566,11 @@ export default function StockChart4H({
               🕐 {updateTime}
             </span>
           )}
+          
+          {/* 数据量 */}
+          <span className="px-3 py-1 bg-purple-100 text-purple-700 text-xs font-medium rounded flex items-center gap-1">
+            📊 {displayData.length}根
+          </span>
         </div>
       </div>
 

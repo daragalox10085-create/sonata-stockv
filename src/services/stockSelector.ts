@@ -91,10 +91,10 @@ export class StockSelector {
       const finalScore = Math.round(
         factors.valuation * this.config.factorWeights.valuation +
         factors.growth * this.config.factorWeights.growth +
-        factors.scale * this.config.factorWeights.scale +
+        factors.profitability * this.config.factorWeights.scale +
         factors.momentum * this.config.factorWeights.momentum +
         factors.quality * this.config.factorWeights.quality +
-        factors.support * this.config.factorWeights.support
+        factors.technical * this.config.factorWeights.support
       );
       
       // 5. 确定推荐等级
@@ -175,9 +175,9 @@ export class StockSelector {
     else if (q.profitGrowth > 10) growth += 20;
     else if (q.profitGrowth > 0) growth += 10;
     
-    // 规模因子（10%）
-    let scale = 60;
-    if (q.marketCap > 1000_0000_0000) scale = 90;  // >1000亿
+    // 规模因子（10%）-> 盈利能力
+    let profitability = 60;
+    if (q.marketCap > 1000_0000_0000) profitability = 90;  // >1000亿
     
     // 动量因子（15%）- 使用年化收益率标准化
     let momentum = 50;
@@ -236,27 +236,27 @@ export class StockSelector {
     else if (q.roe > 10) quality += 30;
     else if (q.roe > 5) quality += 15;
     
-    // 支撑因子（15%）- 距离支撑位近且上涨空间大
-    let support = 50;
+    // 技术因子（15%）- 距离支撑位近且上涨空间大
+    let technical = 50;
     const absDist = Math.abs(distSupport);
-    if (absDist <= 2) support += 35;  // 非常接近支撑
-    else if (absDist <= 5) support += 25;
-    else if (absDist <= 8) support += 15;
+    if (absDist <= 2) technical += 35;  // 非常接近支撑
+    else if (absDist <= 5) technical += 25;
+    else if (absDist <= 8) technical += 15;
     
-    if (upSpace >= 15 && upSpace <= 40) support += 25;
-    else if (upSpace >= 10) support += 15;
-    else if (upSpace >= 5) support += 10;
+    if (upSpace >= 15 && upSpace <= 40) technical += 25;
+    else if (upSpace >= 10) technical += 15;
+    else if (upSpace >= 5) technical += 10;
     
     // 超跌反弹加成
-    if (distSupport < 0) support += Math.min(15, Math.abs(distSupport) * 2);
+    if (distSupport < 0) technical += Math.min(15, Math.abs(distSupport) * 2);
     
     return {
       valuation: Math.min(100, Math.max(0, valuation)),
       growth: Math.min(100, Math.max(0, growth)),
-      scale: Math.min(100, Math.max(0, scale)),
+      profitability: Math.min(100, Math.max(0, profitability)),
       momentum: Math.min(100, Math.max(0, momentum)),
       quality: Math.min(100, Math.max(0, quality)),
-      support: Math.min(100, Math.max(0, support))
+      technical: Math.min(100, Math.max(0, technical))
     };
   }
 

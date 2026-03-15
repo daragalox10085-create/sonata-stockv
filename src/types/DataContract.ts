@@ -5,6 +5,16 @@
 
 export type DataSource = 'eastmoney' | 'tencent' | 'sina' | 'cache' | 'none';
 
+// K 线数据点
+export interface KLinePoint {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
 export interface DataVerification {
   source: DataSource;
   timestamp: string;
@@ -40,23 +50,36 @@ export function verifyRealData<T extends { source: DataSource }>(
 
 // 股票数据接口
 export interface StockQuote {
+  symbol: string;
   code: string;
   name: string;
   currentPrice: number;
+  change: number;
+  changePercent: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  // 估值指标
   pe: number;
-  peg: number;
+  peTtm?: number;
   pb: number;
+  ps?: number;
+  peg: number;
+  // 盈利能力
   roe: number;
   profitGrowth: number;
   revenueGrowth: number;
+  // 市值
   marketCap: number;
   totalShares?: number;
   floatShares?: number;
-  // 动量相关字段
-  changePercent?: number;      // 当日涨跌幅%
-  twentyDayChange?: number;    // 20日涨跌幅%
-  sixtyDayChange?: number;     // 60日涨跌幅%
-  volume?: number;             // 成交量
+  // 动量
+  twentyDayChange?: number;
+  sixtyDayChange?: number;
+  volume?: number;
+  // 资金流向
+  mainForceNet?: number;
   source: DataSource;
   timestamp: string;
 }
@@ -66,10 +89,10 @@ export interface SectorData {
   code: string;
   name: string;
   changePercent: number;
-  mainForceNet: number;  // 主力净流入（元）
-  turnoverRate: number;  // 换手率%
-  marketValue: number;   // 总市值
-  rsi: number;          // RSI指标
+  mainForceNet: number;
+  turnoverRate: number;
+  marketValue: number;
+  rsi: number;
   source: DataSource;
   timestamp: string;
 }
@@ -102,12 +125,12 @@ export interface StockRecommendation {
   score: number;
   confidence: number;
   factors: {
-    valuation: number;   // 估值 30%
-    growth: number;      // 成长 20%
-    scale: number;       // 规模 10%
-    momentum: number;    // 动量 15%
-    quality: number;     // 质量 10%
-    support: number;     // 支撑 15%
+    valuation: number;
+    growth: number;
+    profitability: number;
+    quality: number;
+    momentum: number;
+    technical: number;
   };
   metrics: {
     pe: number;
@@ -129,4 +152,54 @@ export interface StockRecommendation {
     sectorName: string;
     sectorScore: number;
   };
+}
+
+// API 相关类型
+export interface ApiLog {
+  apiName: string;
+  symbol: string;
+  timestamp: string | Date;
+  duration: number;
+  status: 'success' | 'error' | 'timeout';
+  errorMessage?: string;
+  responseData?: any;
+}
+
+export interface ApiConfig {
+  name: string;
+  url: string | ((...args: any[]) => string);
+  timeout: number;
+  headers?: Record<string, string>;
+}
+
+export interface StockSearchResult {
+  code: string;
+  name: string;
+  market: string;
+  type?: string;
+}
+
+// 向后兼容的 StockData（包含 K 线数据）
+export interface StockData extends StockQuote {
+  kLineData?: KLinePoint[];
+  quantScore?: number;
+  quantSummary?: string;
+  detailedAdvice?: string;
+  analysis?: string | any;
+  dataSource?: string;
+  dataQuality?: 'real' | 'fallback';
+  updateTime?: string;
+  support?: number;
+  resistance?: number;
+  stopLoss?: number;
+  takeProfit1?: number;
+  takeProfit2?: number;
+  importance?: 'high' | 'medium' | 'low';
+  trendAnalysis?: string;
+  supportPrice?: number;
+  resistancePrice?: number;
+  actionAdvice?: string;
+  riskWarning?: string;
+  recommendation?: string;
+  recommendationReason?: string;
 }

@@ -91,10 +91,24 @@ export class RealDataFetcher {
         console.warn(`[RealDataFetcher] 获取历史价格失败 ${stockCode}:`, e);
       }
       
+      const currentPrice = this.safeNumber(data.data.f43) / 100;  // f43是当前价*100
+      const openPrice = this.safeNumber(data.data.f46) / 100;     // f46是开盘价*100
+      const highPrice = this.safeNumber(data.data.f44) / 100;     // f44是最高价*100
+      const lowPrice = this.safeNumber(data.data.f45) / 100;      // f45是最低价*100
+      const closePrice = this.safeNumber(data.data.f60) / 100;    // f60是昨收*100
+      const change = currentPrice - closePrice;
+      
       const quote: StockQuote = {
         code: stockCode,
+        symbol: stockCode,
         name: data.data.f57 || '未知',
-        currentPrice: this.safeNumber(data.data.f43) / 100,  // f43是当前价*100
+        currentPrice: currentPrice,
+        change: change,
+        changePercent: changePercent,
+        open: openPrice,
+        high: highPrice,
+        low: lowPrice,
+        close: closePrice,
         pe: this.safeNumber(data.data.f162),
         peg: this.safeNumber(data.data.f163),
         pb: this.safeNumber(data.data.f167),
@@ -103,7 +117,6 @@ export class RealDataFetcher {
         revenueGrowth: this.safeNumber(data.data.f170),
         marketCap: this.safeNumber(data.data.f116),
         // 动量相关字段
-        changePercent: changePercent,
         twentyDayChange: twentyDayChange,
         sixtyDayChange: sixtyDayChange,
         volume: this.safeNumber(data.data.f21),

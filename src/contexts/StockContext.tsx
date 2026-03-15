@@ -14,9 +14,20 @@ export interface StockData {
   close: number;
   volume: number;
   marketCap: number;
+  // 财务指标
+  pe?: number;
+  peTtm?: number;
+  pb?: number;
+  ps?: number;
+  peg?: number;
+  roe?: number;
+  profitGrowth?: number;
+  revenueGrowth?: number;
+  // K线数据
   kLineData: KLinePoint[];
-  kLineDataMulti?: KLineData; // 多时间周期数据
-  currentTimeframe?: KLineTimeframe; // 当前选中的时间周期
+  kLineDataMulti?: KLineData;
+  currentTimeframe?: KLineTimeframe;
+  // 量化分析
   quantScore: number;
   quantSummary: string;
   support: number;
@@ -26,14 +37,14 @@ export interface StockData {
   takeProfit2: number;
   importance: 'high' | 'medium' | 'low';
   trendAnalysis: string;
-  coreLogic?: string;  // 一句话核心逻辑
-  positionSize?: string;  // 建议仓位
+  coreLogic?: string;
+  positionSize?: string;
   supportPrice: number;
   resistancePrice: number;
   actionAdvice: string;
   riskWarning: string;
-  recommendation?: string;  // 建议级别：强烈买入/买入/建仓/观望/减仓/卖出
-  recommendationReason?: string;  // 建议原因
+  recommendation?: string;
+  recommendationReason?: string;
   dataSource?: string;
   dataQuality?: 'real' | 'fallback';
   updateTime?: string;
@@ -56,10 +67,11 @@ export interface KLinePoint {
 }
 
 // K 线时间周期枚举
-export type KLineTimeframe = '60' | '101';
+export type KLineTimeframe = '60' | '240' | '101';
 
 export interface KLineData {
   '60': KLinePoint[];
+  '240': KLinePoint[];
   '101': KLinePoint[];
 }
 
@@ -567,12 +579,16 @@ async function fetchTencentKLineWithTimeframe(symbol: string, timeframe: KLineTi
 async function fetchMultiTimeframeKLine(symbol: string): Promise<KLineData | null> {
   // 并发请求三个时间周期
   const [k60Result, k240Result, k101Result] = await Promise.allSettled([
-    fetchTencentKLineWithTimeframe(symbol, '60', 120),   // 1 小时线，120 周期
+    fetchTencentKLineWithTimeframe(symbol, '60', 1000),   // 1 小时线，1000 周期（约一年）
     fetchTencentKLineWithTimeframe(symbol, '240', 360),  // 4 小时线，360 周期
-    fetchTencentKLineWithTimeframe(symbol, '101', 360)   // 日线，360 周期
+    fetchTencentKLineWithTimeframe(symbol, '101', 360)   // 日线，360 周期（约一年）
   ]);
   
-  const kLineData: Partial<KLineData> = {};
+  const kLineData: KLineData = {
+    '60': [],
+    '240': [],
+    '101': []
+  };
   
   if (k60Result.status === 'fulfilled' && k60Result.value) {
     kLineData['60'] = k60Result.value;
@@ -772,7 +788,7 @@ export function StockProvider({ children }: { children: React.ReactNode }) {
         volume: quote.volume,
         marketCap: quote.marketCap,
         kLineData: kLineData,
-        kLineDataMulti: multiKLineData || { '60': [], '101': [] },
+        kLineDataMulti: multiKLineData || { '60': [], '240': [], '101': [] },
         currentTimeframe: defaultTimeframe,
         dataSource: quote.source,
         dataQuality: kLineData && kLineData.length >= 30 ? 'real' : 'fallback',

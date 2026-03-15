@@ -122,7 +122,7 @@ export class StockPickerService {
     if (!quote) return null;
     
     // 获取K线数据计算支撑位
-    const klineData = await unifiedStockDataService.fetchKLineData(code, 60);
+    const klineData = await unifiedStockDataService.fetchKLineData(code, '101', 60);
     if (!klineData || klineData.length < 20) return null;
     
     // 计算支撑位（使用近期低点）

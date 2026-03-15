@@ -3,6 +3,9 @@
  * 版本：v2.0
  */
 
+// 先导入类型
+import type { DynamicHotSector } from './DynamicSectorAnalyzer';
+
 export { RealDataFetcher, realDataFetcher } from './RealDataFetcher';
 export { MonteCarloSimulator } from './MonteCarloService';
 export { StockSelector } from './StockSelector';
@@ -15,7 +18,7 @@ export type { StockRecommendation } from '../types/DataContract';
 export type { DynamicHotSector } from './DynamicSectorAnalyzer';
 
 // 兼容旧版类型
-export interface HotSector extends DynamicHotSector {}
+export type HotSector = DynamicHotSector;
 
 // 创建单例实例供 UI 使用
 import { RealDataFetcher } from './RealDataFetcher';

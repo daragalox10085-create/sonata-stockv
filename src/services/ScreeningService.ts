@@ -142,7 +142,7 @@ export class ScreeningService {
     for (const stock of stocks) {
       try {
         // 获取K线数据
-        const klineData = await unifiedStockDataService.fetchKLineData(stock.code, 60);
+        const klineData = await unifiedStockDataService.fetchKLineData(stock.code, '101', 60);
         if (!klineData || klineData.length < 20) continue;
         
         // 技术面分析
