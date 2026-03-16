@@ -176,6 +176,12 @@ export class ScreeningService {
         );
         
         // 应用技术面筛选条件
+        // P0: 风控筛选 - 排除跌破支撑位的股票
+        if (distanceToSupport < 0) {
+          console.log(`[风控] 排除 ${stock.name}(${stock.code})：已跌破支撑位 ${(distanceToSupport * 100).toFixed(1)}%`);
+          continue;
+        }
+        
         if (upsidePotential >= StockConfig.SCREENING_THRESHOLDS.MIN_UPSIDE_POTENTIAL) {
           screened.push({
             ...stock,
@@ -249,27 +255,31 @@ export class ScreeningService {
   }
 
   /**
-   * 确定推荐等级
+   * 确定推荐等级（P1: 根据距离支撑位分级）
    */
   private determineRecommendationLevel(stock: any, rank: number): { level: string; text: string } {
     const { compositeScore, upsidePotential, distanceToSupport } = stock;
     
-    if (compositeScore >= 80 && upsidePotential >= 0.20 && distanceToSupport <= -0.03) {
-      return { level: '强烈推荐', text: '基本面优秀，技术面支撑强劲，上涨空间大' };
+    // P1: 根据距离支撑位计算推荐等级
+    // distanceToSupport 是百分比（如 0.05 表示 5%）
+    const distancePercent = distanceToSupport * 100;
+    
+    // 距离支撑位 < 3%：强烈推荐（低风险）
+    if (distancePercent <= 3 && compositeScore >= 75) {
+      return { level: '强烈推荐', text: '距离支撑位近，安全边际高，上涨空间大' };
     }
     
-    if (compositeScore >= 70 && upsidePotential >= 0.15 && distanceToSupport <= -0.02) {
-      return { level: '推荐', text: '基本面良好，技术面有支撑，具备上涨潜力' };
+    // 距离支撑位 3-8%：推荐（中风险）
+    if (distancePercent <= 8 && compositeScore >= 65) {
+      return { level: '推荐', text: '距离支撑位适中，具备上涨潜力' };
     }
     
-    if (compositeScore >= 60 && upsidePotential >= 0.10 && distanceToSupport <= -0.01) {
-      return { level: '谨慎推荐', text: '基本面尚可，技术面有支撑，需关注风险' };
+    // 距离支撑位 > 8%：观望（高风险）
+    if (distancePercent > 8) {
+      return { level: '观望', text: `距离支撑位较远（${distancePercent.toFixed(1)}%），追高风险较高` };
     }
     
-    if (compositeScore >= 50 && upsidePotential >= 0.08) {
-      return { level: '观察', text: '基本面一般，技术面有待观察' };
-    }
-    
+    // 默认情况
     return { level: '观望', text: '需进一步观察确认' };
   }
 }
