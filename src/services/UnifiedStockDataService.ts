@@ -6,9 +6,12 @@
  * 1. 腾讯财经 (主要)
  * 2. 东方财富 (备用)
  * 3. 新浪财经 (备用)
+ * 
+ * 已集成统一API客户端 (ApiClient)
  */
 
 import { StockQuote, KLinePoint } from '../types/DataContract';
+import { apiClient } from './ApiClient';
 
 // API 配置 - 使用 Vite 代理路径
 const API_CONFIG = {
@@ -273,9 +276,30 @@ export class UnifiedStockDataService {
 
   /**
    * 获取 K 线数据（指定周期）
-   * 使用东方财富 API（更稳定）
+   * 使用统一API客户端（支持多源自动切换）
    */
   async fetchKLineDataByPeriod(symbol: string, timeframe: string, days: number): Promise<KLinePoint[] | null> {
+    // 使用统一API客户端获取K线数据（自动处理多源优先级）
+    const result = await apiClient.getKLineDataWithFallback(symbol, timeframe, days);
+    
+    if (result.data && result.data.klines && result.data.klines.length > 0) {
+      // 转换K线数据格式
+      return result.data.klines.map((kline: string) => {
+        const parts = kline.split(',');
+        return {
+          date: parts[0],
+          open: parseFloat(parts[1]),
+          close: parseFloat(parts[2]),
+          low: parseFloat(parts[3]),
+          high: parseFloat(parts[4]),
+          volume: parseInt(parts[5]) || 0
+        };
+      }).filter((k: KLinePoint) => !isNaN(k.open) && k.open > 0);
+    }
+    
+    // 如果统一API客户端失败，回退到旧方法
+    console.warn('[UnifiedStockDataService] 统一API客户端失败，使用旧方法');
+    
     // 首先尝试东方财富K线API
     const emData = await this.fetchEastmoneyKLine(symbol, timeframe, days);
     if (emData && emData.length > 0) {

@@ -6,7 +6,6 @@ import { screeningService } from '../services/ScreeningService';
 import { useStock } from '../contexts/StockContext';
 import { AlertCircle, Info } from 'lucide-react';
 import { AlgorithmParliament } from '../components/AlgorithmParliament';
-import { FinancialMetrics } from '../components/FinancialMetrics';
 
 interface WeeklyMarketAnalysisProps {
   showStockPicker?: boolean;
@@ -281,20 +280,6 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
             timeHorizon={5}
           />
           
-          {/* 财务指标 */}
-          <div className="mt-6">
-            <FinancialMetrics
-              pe={stockData.pe}
-              peTtm={stockData.peTtm}
-              pb={stockData.pb}
-              ps={stockData.ps}
-              peg={stockData.peg}
-              roe={stockData.roe}
-              profitGrowth={stockData.profitGrowth}
-              revenueGrowth={stockData.revenueGrowth}
-              marketCap={stockData.marketCap}
-            />
-          </div>
         </div>
       )}
 

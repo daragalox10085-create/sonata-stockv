@@ -20,7 +20,7 @@ export const ConsensusIndicator: React.FC<ConsensusIndicatorProps> = ({
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <div className="text-sm font-semibold text-slate-900">
-            算法议会共识
+            多模型共识
           </div>
           <div 
             className="px-2 py-0.5 text-xs font-medium rounded-full"
@@ -33,8 +33,8 @@ export const ConsensusIndicator: React.FC<ConsensusIndicatorProps> = ({
           </div>
         </div>
         
-        <div className="text-xs text-slate-500">
-          预测周期: {timeHorizon}天
+        <div className="px-3 py-1.5 bg-amber-100 border border-amber-300 rounded-lg">
+          <span className="text-sm font-bold text-amber-800">预测周期: {timeHorizon}天</span>
         </div>
       </div>
       

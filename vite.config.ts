@@ -100,6 +100,22 @@ export default defineConfig({
       '/api/eastmoney/sector': {
         target: 'https://push2.eastmoney.com',
         changeOrigin: true,
+        rewrite: (path) => {
+          // 板块列表API: /api/qt/clist/get
+          // 格式: pn=1&pz=100&po=1&np=1&fltt=2&invt=2&fid=f62&fs=m:90+t:2&fields=f12,f14,f3,f62,f8,f20,f184
+          return path.replace(/^\/api\/eastmoney\/sector/, '/api/qt/clist/get');
+        },
+        secure: false
+      },
+      
+      // ========== 新增：东方财富板块成分股 ==========
+      '/api/eastmoney/sector/constituents': {
+        target: 'https://push2.eastmoney.com',
+        changeOrigin: true,
+        rewrite: (path) => {
+          // 板块成分股API
+          return path.replace(/^\/api\/eastmoney\/sector\/constituents/, '/api/qt/clist/get');
+        },
         secure: false
       },
       

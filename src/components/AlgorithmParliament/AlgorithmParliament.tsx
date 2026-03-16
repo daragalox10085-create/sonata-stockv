@@ -101,10 +101,10 @@ export const AlgorithmParliament: React.FC<AlgorithmParliamentProps> = ({
             </div>
             <div>
               <div className="text-sm font-semibold text-slate-900">
-                算法议会：{data.stock.name} ({data.stock.symbol})
+                多模型预测：{data.stock.name} ({data.stock.symbol})
               </div>
               <div className="text-xs text-slate-500">
-                基于{data.predictions.length}个独立算法的民主投票
+                基于{data.predictions.length}个独立算法的概率推断
               </div>
             </div>
           </div>
