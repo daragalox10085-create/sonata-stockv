@@ -124,38 +124,95 @@ export class ScheduledSectorService {
     })).sort((a, b) => b.changePercent - a.changePercent);
   }
 
-  // 选股推荐基于热门板块生成
+  // 选股推荐基于热门板块生成（增加风控筛选）
   private generateStockPicks(sectors: DynamicHotSector[]): any[] {
     const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / (1000 * 60 * 60 * 24));
     
     // 从热门板块中提取代表性股票
     const picksFromSectors = sectors.flatMap(sector => 
-      sector.topStocks.slice(0, 2).map(stock => ({
-        code: stock.code,
-        name: stock.name,
-        sector: sector.name,
-        baseScore: sector.score
-      }))
+      sector.topStocks.slice(0, 2).map(stock => {
+        // 生成距离支撑位（模拟真实数据）
+        const distanceToSupport = Math.round((Math.random() * 15 - 5) * 10) / 10; // -5% 到 +10%
+        
+        // P0: 高位警示 - 如果板块涨幅过大，增加距离支撑位
+        const sectorChange = sector.changePercent;
+        let adjustedDistance = distanceToSupport;
+        if (sectorChange > 3) {
+          adjustedDistance += 2; // 板块涨幅>3%，距离支撑增加2%
+        }
+        
+        return {
+          code: stock.code,
+          name: stock.name,
+          sector: sector.name,
+          baseScore: sector.score,
+          distanceToSupport: adjustedDistance,
+          sectorChange: sectorChange
+        };
+      })
     );
     
-    // 去重并选择前5只
-    const uniquePicks = picksFromSectors.filter((pick, index, self) => 
-      index === self.findIndex(p => p.code === pick.code)
-    ).slice(0, 5);
+    // P1: 风控筛选 - 排除高风险股票
+    const filteredPicks = picksFromSectors.filter(pick => {
+      // 排除跌破支撑位的股票（distanceToSupport < 0）
+      if (pick.distanceToSupport < 0) {
+        console.log(`[风控] 排除 ${pick.name}(${pick.code})：已跌破支撑位 ${pick.distanceToSupport}%`);
+        return false;
+      }
+      return true;
+    });
     
-    return uniquePicks.map((pick, index) => {
-      const randomFactor = Math.sin(dayOfYear * 0.1 + index) * 5;
-      const score = Math.round(pick.baseScore + randomFactor);
-      const upSpace = Math.round((10 + Math.random() * 10) * 10) / 10;
+    // 按距离支撑位排序（优先选择距离近的）
+    const sortedPicks = filteredPicks.sort((a, b) => a.distanceToSupport - b.distanceToSupport);
+    
+    // 选择前5只
+    const selectedPicks = sortedPicks.slice(0, 5);
+    
+    return selectedPicks.map((pick, index) => {
+      const randomFactor = Math.sin(dayOfYear * 0.1 + index) * 3; // 减少随机性
+      const baseScore = Math.min(100, Math.max(50, pick.baseScore + randomFactor));
+      
+      // P1: 根据距离支撑位计算推荐等级
+      let rating: string;
+      let riskLevel: string;
+      let warning: string;
+      
+      if (pick.distanceToSupport < 0) {
+        rating = '回避';
+        riskLevel = '极高';
+        warning = '已跌破支撑位';
+      } else if (pick.distanceToSupport <= 3) {
+        rating = '强烈推荐';
+        riskLevel = '低';
+        warning = '';
+      } else if (pick.distanceToSupport <= 8) {
+        rating = '推荐';
+        riskLevel = '中';
+        warning = '';
+      } else {
+        rating = '观望';
+        riskLevel = '高';
+        warning = '距离支撑位较远，追高风险';
+      }
+      
+      // P0: 高位警示
+      if (pick.sectorChange > 3 && pick.distanceToSupport > 5) {
+        warning = warning || '板块涨幅过大，追高风险';
+      }
+      
+      const upSpace = Math.round((10 + Math.random() * 8) * 10) / 10;
       
       return {
         code: pick.code,
         name: pick.name,
         sector: pick.sector,
-        score: Math.min(100, Math.max(50, score)),
-        distanceToSupport: Math.round((Math.random() * 10 - 2) * 10) / 10,
+        score: Math.round(baseScore),
+        distanceToSupport: pick.distanceToSupport,
         upSpace: `+${upSpace}%`,
-        rating: score > 75 ? '强烈推荐' : score > 65 ? '推荐' : '观望'
+        rating: rating,
+        riskLevel: riskLevel,
+        warning: warning,
+        sectorChange: pick.sectorChange
       };
     });
   }
