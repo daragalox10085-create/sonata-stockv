@@ -3,6 +3,7 @@ import { apiClient } from './ApiClient';
 import { RealisticSectorGenerator } from './RealisticSectorGenerator';
 import { sectorScraperService } from './SectorScraperService';
 import { scheduledSectorService } from './ScheduledSectorService';
+import { realSectorScraper } from './RealSectorScraper';
 
 export interface DynamicHotSector {
   code: string;
@@ -146,7 +147,16 @@ export class DynamicSectorAnalyzer {
    */
   async discoverHotSectors(limit: number = 6): Promise<DynamicHotSector[]> {
     try {
-      // 使用定时任务服务的缓存数据
+      // 1. 优先尝试从本地文件读取（手动更新的数据）
+      console.log('[DynamicSectorAnalyzer] 尝试从本地文件获取板块数据');
+      const fileSectors = await realSectorScraper.getSectors();
+      
+      if (fileSectors && fileSectors.length > 0) {
+        console.log(`[DynamicSectorAnalyzer] 从本地文件获取到 ${fileSectors.length} 个板块`);
+        return fileSectors.slice(0, limit);
+      }
+      
+      // 2. 尝试使用定时任务服务的缓存数据
       console.log('[DynamicSectorAnalyzer] 使用定时任务服务获取板块数据');
       const sectors = scheduledSectorService.getHotSectors();
       
@@ -155,7 +165,7 @@ export class DynamicSectorAnalyzer {
         return sectors.slice(0, limit);
       }
       
-      // 如果缓存为空，使用真实感数据生成器
+      // 3. 如果都为空，使用真实感数据生成器
       console.log('[DynamicSectorAnalyzer] 缓存为空，使用真实感数据生成器');
       return RealisticSectorGenerator.generateHotSectors(limit);
     } catch (error) {
