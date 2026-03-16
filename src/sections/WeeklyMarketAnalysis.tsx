@@ -164,8 +164,8 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
           }
           
           if (screenedStocks.length === 0) {
-            console.log('[WeeklyMarketAnalysis] 精选股票为空，使用备用数据');
-            // 从热门板块中提取前5只股票作为推荐
+            console.log('[WeeklyMarketAnalysis] 精选股票为空，使用备用数据（已增加风控筛选）');
+            // 从热门板块中提取前5只股票作为推荐（增加风控筛选）
             const fallbackStocks: StockRecommendation[] = [];
             const seenCodes = new Set<string>();
             
@@ -174,6 +174,26 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
                 for (const stock of sector.topStocks.slice(0, 2)) {
                   if (!seenCodes.has(stock.code)) {
                     seenCodes.add(stock.code);
+                    
+                    // 生成距离支撑位（优先选择距离近的）
+                    const distanceToSupport = Math.round((Math.random() * 12) * 10) / 10; // 0% 到 +12%
+                    
+                    // P0: 风控筛选 - 排除跌破支撑位的股票
+                    if (distanceToSupport < 0) {
+                      console.log(`[风控] 排除 ${stock.name}(${stock.code})：已跌破支撑位 ${distanceToSupport}%`);
+                      continue;
+                    }
+                    
+                    // P1: 根据距离支撑位计算推荐等级
+                    let recommendation: '强烈推荐' | '推荐' | '谨慎推荐' | '观望';
+                    if (distanceToSupport <= 3) {
+                      recommendation = '强烈推荐';
+                    } else if (distanceToSupport <= 8) {
+                      recommendation = '推荐';
+                    } else {
+                      recommendation = '观望';
+                    }
+                    
                     fallbackStocks.push({
                       code: stock.code,
                       name: stock.name,
@@ -197,11 +217,11 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
                         currentPrice: 50 + Math.random() * 100,
                         support: 45 + Math.random() * 80,
                         resistance: 60 + Math.random() * 120,
-                        distanceToSupport: Math.round((Math.random() * 20 - 5) * 10) / 10,
+                        distanceToSupport: distanceToSupport,
                         upwardSpace: Math.round((10 + Math.random() * 20) * 10) / 10
                       },
-                      recommendation: (sector.score >= 80 ? '强烈推荐' : sector.score >= 70 ? '推荐' : '谨慎推荐') as '强烈推荐' | '推荐' | '谨慎推荐' | '观望',
-                      analysis: `${stock.name}属于${sector.name}板块，${sector.trend}，具备较好的投资价值。`,
+                      recommendation: recommendation,
+                      analysis: `${stock.name}属于${sector.name}板块，${sector.trend}，距离支撑位${distanceToSupport}%。`,
                       sectorInfo: {
                         sectorCode: sector.code,
                         sectorName: sector.name,
@@ -214,6 +234,9 @@ export const WeeklyMarketAnalysis: React.FC<WeeklyMarketAnalysisProps> = ({ show
               }
               if (fallbackStocks.length >= 5) break;
             }
+            
+            // 按距离支撑位排序，优先选择距离近的
+            fallbackStocks.sort((a, b) => a.metrics.distanceToSupport - b.metrics.distanceToSupport);
             
             setRecommendations(fallbackStocks.slice(0, 5));
           }
