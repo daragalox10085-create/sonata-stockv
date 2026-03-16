@@ -484,14 +484,21 @@ async function fetchEastmoneyData(symbol: string): Promise<{ data: Partial<Stock
     const json = await response.json();
     const data = json.data;
     if (!data || !data.f57) return { data: null, source: '' };
-    const currentPrice = data.f43;
-    const change = data.f44;
-    const changePercent = data.f45;
-    const open = data.f46;
-    const high = data.f47;
-    const low = data.f48;
-    const volume = data.f47;
-    const marketCap = data.f49 * 100000000;
+    
+    // 东方财富 API 字段说明：
+    // f43=当前价(分), f44=最高价(分), f45=最低价(分), f46=开盘价(分), f47=成交量(手)
+    // f48=成交额(元), f49=总市值(万元), f57=股票代码, f58=股票名称, f60=昨收(分)
+    // f169=涨跌额(元), f170=涨跌幅(%)
+    const currentPrice = (data.f43 || 0) / 100;  // 分 -> 元
+    const change = data.f169 || 0;  // f169是涨跌额，单位已经是元
+    const changePercent = data.f170 || 0;  // f170是涨跌幅，单位是%
+    const open = (data.f46 || 0) / 100;  // 分 -> 元
+    const high = (data.f44 || 0) / 100;  // 分 -> 元
+    const low = (data.f45 || 0) / 100;   // 分 -> 元
+    const close = (data.f60 || 0) / 100;  // 昨收，分 -> 元
+    const volume = data.f47 || 0;  // 成交量(手)
+    const marketCap = (data.f49 || 0) * 10000;  // 市值单位是万元，转换为元
+    
     if (isNaN(currentPrice) || currentPrice <= 0) return { data: null, source: '' };
     let validMarketCap = marketCap;
     if (!validMarketCap || validMarketCap <= 0) {
@@ -513,7 +520,7 @@ async function fetchEastmoneyData(symbol: string): Promise<{ data: Partial<Stock
         open,
         high,
         low,
-        close: currentPrice - change,
+        close,
         volume,
         marketCap: Math.floor(validMarketCap),
         dataSource: '东方财富',
@@ -787,6 +794,15 @@ export function StockProvider({ children }: { children: React.ReactNode }) {
         close: quote.currentPrice - quote.change,
         volume: quote.volume,
         marketCap: quote.marketCap,
+        // 财务指标
+        pe: quote.pe,
+        peTtm: quote.peTtm,
+        pb: quote.pb,
+        ps: quote.ps,
+        peg: quote.peg,
+        roe: quote.roe,
+        profitGrowth: quote.profitGrowth,
+        revenueGrowth: quote.revenueGrowth,
         kLineData: kLineData,
         kLineDataMulti: multiKLineData || { '60': [], '240': [], '101': [] },
         currentTimeframe: defaultTimeframe,

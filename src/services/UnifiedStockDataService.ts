@@ -103,6 +103,7 @@ export class UnifiedStockDataService {
 
   /**
    * 腾讯财经 API - 获取实时行情
+   * 腾讯API返回文本格式：v_sh600519="1~贵州茅台~600519~1452.46~..."
    */
   private async fetchTencentQuote(symbol: string): Promise<StockQuote | null> {
     try {
@@ -112,29 +113,47 @@ export class UnifiedStockDataService {
       const response = await fetch(url);
       if (!response.ok) return null;
       
-      const json = await response.json();
-      const data = json.data?.[`${market}${symbol}`];
-      if (!data) return null;
+      // 腾讯API返回文本格式，不是JSON
+      const text = await response.text();
+      const match = text.match(/v_\w+="([^"]+)"/);
+      if (!match) return null;
+      
+      const parts = match[1].split('~');
+      if (parts.length < 32) return null;
+      
+      // 腾讯格式: 0=市场, 1=名称, 2=代码, 3=当前价, 4=昨收, 5=开盘, 6=成交量, ...
+      const name = parts[1];
+      const currentPrice = parseFloat(parts[3]) || 0;
+      const close = parseFloat(parts[4]) || 0;
+      const open = parseFloat(parts[5]) || 0;
+      const volume = parseInt(parts[6]) || 0;
+      const high = parseFloat(parts[33]) || currentPrice * 1.02;
+      const low = parseFloat(parts[34]) || currentPrice * 0.98;
+      const change = currentPrice - close;
+      const changePercent = close > 0 ? (change / close) * 100 : 0;
+      const totalShares = stockTotalSharesMap[symbol] || 100000000;
+      const marketCap = currentPrice * totalShares;
 
       return {
         code: symbol,
         symbol: symbol,
-        name: data.name || symbol,
-        currentPrice: data.price || 0,
-        change: data.price - data.open || 0,
-        changePercent: data.change_percent || 0,
-        open: data.open || 0,
-        high: data.high || 0,
-        low: data.low || 0,
-        close: data.prev_close || 0,
-        pe: data.pe || 0,
+        name: name || symbol,
+        currentPrice: currentPrice,
+        change: change,
+        changePercent: changePercent,
+        open: open,
+        high: high,
+        low: low,
+        close: close,
+        volume: volume,
+        pe: 0,
         peg: 0,
-        pb: data.pb || 0,
+        pb: 0,
         roe: 0,
         profitGrowth: 0,
         revenueGrowth: 0,
-        marketCap: data.total_market_cap || data.market_cap || 0,
-        totalShares: stockTotalSharesMap[symbol],
+        marketCap: marketCap,
+        totalShares: totalShares,
         source: 'tencent',
         timestamp: new Date().toISOString()
       };
@@ -160,27 +179,41 @@ export class UnifiedStockDataService {
       const data = json.data;
       if (!data) return null;
 
+      // 东方财富 API 字段说明：
+      // f43=当前价(分), f44=最高价(分), f45=最低价(分), f46=开盘价(分)
+      // f47=成交量(手), f48=成交额(元), f49=总市值(万元)
+      // f57=股票代码, f58=股票名称, f60=昨收(分)
+      // f116=总市值(元), f169=涨跌额(分), f170=涨跌幅(0.01%)
+      const currentPrice = (data.f43 || 0) / 100;
+      const openPrice = (data.f46 || 0) / 100;
+      const highPrice = (data.f44 || 0) / 100;
+      const lowPrice = (data.f45 || 0) / 100;  // f45是最低价，不是f47
+      const closePrice = (data.f60 || 0) / 100;
+      const change = (data.f169 || 0) / 100;  // f169是涨跌额(分)
+      const changePercent = (data.f170 || 0) / 100;  // f170是涨跌幅(0.01%)
+      
       return {
         code: symbol,
         symbol: symbol,
         name: data.f58 || symbol,
-        currentPrice: data.f43 || 0,
-        change: (data.f43 - data.f44) || 0,
-        changePercent: data.f170 || 0,
-        open: data.f46 || 0,
-        high: data.f44 || 0,
-        low: data.f47 || 0,
-        close: data.f44 || 0,
-        // 财务指标
-        pe: data.f9 || 0,           // 市盈率
-        peTtm: data.f162 || 0,      // 市盈率TTM
-        ps: data.f163 || 0,         // 市销率
-        pb: data.f152 || 0,         // 市净率
-        roe: data.f164 || 0,        // ROE
-        profitGrowth: data.f169 || 0,  // 净利润增长率
-        revenueGrowth: data.f170 || 0, // 营收增长率
-        peg: data.f163 || 0,        // PEG（市销率作为近似）
-        marketCap: data.f116 || 0,
+        currentPrice: currentPrice,
+        change: change,
+        changePercent: changePercent,
+        open: openPrice,
+        high: highPrice,
+        low: lowPrice,
+        close: closePrice,
+        volume: data.f47 || 0,  // 成交量(手)
+        // 财务指标 - 东方财富返回的是原始值，需要除以100
+        pe: (data.f9 || 0) / 100,           // 市盈率
+        peTtm: (data.f162 || 0) / 100,      // 市盈率TTM
+        ps: (data.f163 || 0) / 100,         // 市销率
+        pb: (data.f152 || 0) / 100,         // 市净率
+        roe: (data.f164 || 0) / 100,        // ROE(%)
+        profitGrowth: 0,            // 需要其他API获取
+        revenueGrowth: 0,           // 需要其他API获取
+        peg: (data.f163 || 0) / 100,        // PEG（市销率作为近似）
+        marketCap: data.f116 || 0,  // 市值单位是元
         totalShares: stockTotalSharesMap[symbol],
         source: 'eastmoney',
         timestamp: new Date().toISOString()
@@ -220,6 +253,7 @@ export class UnifiedStockDataService {
         high: parseFloat(parts[4]) || 0,
         low: parseFloat(parts[5]) || 0,
         close: parseFloat(parts[2]) || 0,
+        volume: parseInt(parts[6]) || 0,
         pe: 0,
         peg: 0,
         pb: 0,
@@ -239,30 +273,118 @@ export class UnifiedStockDataService {
 
   /**
    * 获取 K 线数据（指定周期）
+   * 使用东方财富 API（更稳定）
    */
   async fetchKLineDataByPeriod(symbol: string, timeframe: string, days: number): Promise<KLinePoint[] | null> {
+    // 首先尝试东方财富K线API
+    const emData = await this.fetchEastmoneyKLine(symbol, timeframe, days);
+    if (emData && emData.length > 0) {
+      return emData;
+    }
+    
+    // 如果东方财富失败，尝试腾讯K线API
+    const tencentData = await this.fetchTencentKLine(symbol, days);
+    if (tencentData && tencentData.length > 0) {
+      return tencentData;
+    }
+    
+    return null;
+  }
+
+  /**
+   * 东方财富 K 线 API
+   */
+  private async fetchEastmoneyKLine(symbol: string, timeframe: string, days: number): Promise<KLinePoint[] | null> {
     try {
-      // 使用腾讯财经 API
-      const market = getMarketPrefix(symbol);
-      const url = `/api/tencent/kline?q=${market}${symbol}&period=${timeframe}&days=${days}`;
+      const secid = symbol.startsWith('6') ? `1.${symbol}` : `0.${symbol}`;
+      const klt = timeframe === '60' ? '60' : timeframe === '240' ? '240' : '101';
+      const fields1 = 'f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13';
+      const fields2 = 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61';
+      // end参数是必需的，否则返回rc=102
+      const url = `/api/eastmoney/kline?secid=${secid}&fields1=${fields1}&fields2=${fields2}&klt=${klt}&fqt=1&lmt=${days}&end=20500101`;
       
       const response = await fetch(url);
       if (!response.ok) return null;
       
       const json = await response.json();
-      const data = json.data?.[`${market}${symbol}`]?.day;
-      if (!data || !Array.isArray(data)) return null;
+      const klines = json.data?.klines;
+      if (!klines || !Array.isArray(klines) || klines.length === 0) {
+        console.warn('[东方财富K线] 无数据，尝试腾讯K线');
+        return null;
+      }
 
-      return data.map((item: any[]) => ({
-        date: new Date(item[0] * 1000).toISOString().split('T')[0],
-        open: item[1],
-        high: item[3],
-        low: item[4],
-        close: item[2],
-        volume: item[5] || 0
-      })).filter((k: KLinePoint) => !isNaN(k.open) && k.open > 0);
+      return klines.map((kline: string) => {
+        const parts = kline.split(',');
+        return {
+          date: parts[0],
+          open: parseFloat(parts[1]),
+          close: parseFloat(parts[2]),
+          low: parseFloat(parts[3]),
+          high: parseFloat(parts[4]),
+          volume: parseInt(parts[5]) || 0
+        };
+      }).filter((k: KLinePoint) => !isNaN(k.open) && k.open > 0);
     } catch (error) {
-      console.warn('[K 线数据] 获取失败:', error);
+      console.warn('[东方财富K线] 获取失败:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 腾讯 K 线 API (备选)
+   */
+  private async fetchTencentKLine(symbol: string, days: number): Promise<KLinePoint[] | null> {
+    try {
+      const market = symbol.startsWith('6') ? 'sh' : 'sz';
+      const endDate = new Date().toISOString().split('T')[0];
+      const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      
+      const url = `/api/tencent/kline?code=${market}${symbol}&start=${startDate}&end=${endDate}&limit=${days}&adjust=qfq`;
+      console.log('[腾讯K线] 请求URL:', url);
+      
+      const response = await fetch(url);
+      if (!response.ok) {
+        console.warn('[腾讯K线] HTTP错误:', response.status);
+        return null;
+      }
+      
+      const json = await response.json();
+      console.log('[腾讯K线] 响应:', json);
+      
+      const key = market + symbol;
+      const data = json.data?.[key]?.day;
+      
+      if (!data) {
+        console.warn('[腾讯K线] data字段为空, json:', json);
+        return null;
+      }
+      
+      if (!Array.isArray(data)) {
+        console.warn('[腾讯K线] data不是数组:', data);
+        return null;
+      }
+      
+      if (data.length === 0) {
+        console.warn('[腾讯K线] 数据为空数组');
+        return null;
+      }
+
+      console.log('[腾讯K线] 获取到', data.length, '条数据');
+      
+      // 腾讯格式: [日期, 开盘, 收盘, 最低, 最高, 成交量]
+      const result = data.map((item: any[]) => ({
+        date: item[0],
+        open: parseFloat(item[1]),
+        close: parseFloat(item[2]),
+        low: parseFloat(item[3]),
+        high: parseFloat(item[4]),
+        volume: parseInt(item[5]) || 0
+      })).filter((k: KLinePoint) => !isNaN(k.open) && k.open > 0);
+      
+      console.log('[腾讯K线] 解析后', result.length, '条有效数据');
+      return result;
+    } catch (error) {
+      console.warn('[腾讯K线] 获取失败:', error);
       return null;
     }
   }

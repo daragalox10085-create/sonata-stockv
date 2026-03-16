@@ -41,7 +41,10 @@ export default defineConfig({
       '/api/eastmoney/kline': {
         target: 'https://push2his.eastmoney.com',
         changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/eastmoney\/kline/, '/api/qt/stock/kline/get'),
+        rewrite: (path) => {
+          // 保留完整的查询参数
+          return path.replace(/^\/api\/eastmoney\/kline/, '/api/qt/stock/kline/get');
+        },
         secure: false
       },
       
@@ -80,7 +83,10 @@ export default defineConfig({
         target: 'https://hq.sinajs.cn',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/sina/, ''),
-        secure: false
+        secure: false,
+        headers: {
+          'Referer': 'https://finance.sina.com.cn'
+        }
       },
       
       // ========== 新增：东方财富批量股票数据 ==========
