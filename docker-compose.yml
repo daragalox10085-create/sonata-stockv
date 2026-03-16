@@ -1,0 +1,100 @@
+# Sonata V2.5 - Docker Compose 配置
+# 一键启动前后端服务
+
+version: '3.8'
+
+services:
+  # ==========================================
+  # 前端服务
+  # ==========================================
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    container_name: sonata-frontend
+    restart: unless-stopped
+    ports:
+      - "5179:80"
+    environment:
+      - NODE_ENV=production
+      - VITE_API_BASE_URL=http://backend:5000
+    networks:
+      - sonata-network
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ==========================================
+  # 后端服务
+  # ==========================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: runner
+    container_name: sonata-backend
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=production
+      - PORT=5000
+      - LOG_LEVEL=INFO
+      - ENABLE_CACHE=true
+      - HOT_SECTORS_CACHE_TTL=604800
+      - STOCK_DATA_CACHE_TTL=3600
+      - REQUEST_TIMEOUT=10
+    networks:
+      - sonata-network
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:5000/api/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+  # ==========================================
+  # 可选：Redis 缓存服务
+  # ==========================================
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: sonata-redis
+  #   restart: unless-stopped
+  #   ports:
+  #     - "6379:6379"
+  #   volumes:
+  #     - redis-data:/data
+  #   networks:
+  #     - sonata-network
+  #   command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+
+# ==========================================
+# 网络配置
+# ==========================================
+networks:
+  sonata-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# ==========================================
+# 数据卷
+# ==========================================
+volumes:
+  redis-data:
+    driver: local

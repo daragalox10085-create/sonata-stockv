@@ -1,30 +1,75 @@
-// src/services/ApiClient.ts
-// 统一API客户端 - 封装所有数据源调用
+/**
+ * 统一API客户端
+ * 封装所有数据源调用，提供统一的错误处理和重试机制
+ *
+ * @module services/ApiClient
+ * @version 2.0.0
+ */
 
-import { StockConfig } from '../config/stock.config';
+import { logger } from '../utils/logger';
+import {
+  AppError,
+  ErrorCode,
+  createNetworkError,
+} from '../utils/errors';
+import type { ErrorResponse } from '../types/api';
 
+/**
+ * API 响应接口
+ */
 export interface ApiResponse<T> {
+  /** 响应数据 */
   data: T | null;
+  /** 错误信息 */
   error: string | null;
+  /** 数据来源 */
   source: string;
+  /** 时间戳 */
   timestamp: string;
+  /** 是否成功 */
+  success: boolean;
 }
 
+/**
+ * 请求配置选项
+ */
+interface RequestOptions {
+  /** 超时时间（毫秒） */
+  timeout?: number;
+  /** 重试次数 */
+  retries?: number;
+  /** 重试延迟（毫秒） */
+  retryDelay?: number;
+  /** 请求头 */
+  headers?: Record<string, string>;
+}
+
+/**
+ * 默认请求配置
+ */
+const DEFAULT_OPTIONS: Required<RequestOptions> = {
+  timeout: 10000,
+  retries: 3,
+  retryDelay: 1000,
+  headers: {},
+};
+
+/**
+ * API 客户端类
+ * 单例模式实现
+ */
 export class ApiClient {
   private static instance: ApiClient;
-  private readonly TIMEOUT = 10000;
-  private readonly RETRY_COUNT = 3;
-  private readonly RETRY_DELAY = 1000;
 
-  // API基础URL（通过Vite代理）
-  private readonly API_BASE = {
-    eastmoney: '/api/eastmoney',
-    tencent: '/api/tencent',
-    sina: '/api/sina'
-  };
-
+  /**
+   * 私有构造函数
+   */
   private constructor() {}
 
+  /**
+   * 获取单例实例
+   * @returns ApiClient 实例
+   */
   static getInstance(): ApiClient {
     if (!ApiClient.instance) {
       ApiClient.instance = new ApiClient();
@@ -33,174 +78,251 @@ export class ApiClient {
   }
 
   /**
-   * 统一GET请求
+   * 延迟函数
+   * @param ms - 延迟毫秒数
+   * @returns Promise
    */
-  private async get<T>(url: string, options?: RequestInit): Promise<ApiResponse<T>> {
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-          ...options?.headers
-        },
-        ...options
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      
-      return {
-        data,
-        error: null,
-        source: this.extractSource(url),
-        timestamp: new Date().toISOString()
-      };
-    } catch (error) {
-      console.error(`[ApiClient] 请求失败: ${url}`, error);
-      return {
-        data: null,
-        error: error instanceof Error ? error.message : '未知错误',
-        source: this.extractSource(url),
-        timestamp: new Date().toISOString()
-      };
-    }
-  }
-
-  /**
-   * 带重试的请求
-   */
-  private async getWithRetry<T>(url: string, retries: number = this.RETRY_COUNT): Promise<ApiResponse<T>> {
-    let lastError: string | null = null;
-    
-    for (let i = 0; i < retries; i++) {
-      const result = await this.get<T>(url);
-      
-      if (result.data !== null) {
-        return result;
-      }
-      
-      lastError = result.error;
-      
-      if (i < retries - 1) {
-        console.log(`[ApiClient] 重试 ${i + 1}/${retries}: ${url}`);
-        await this.delay(this.RETRY_DELAY * (i + 1));
-      }
-    }
-    
-    return {
-      data: null,
-      error: `重试${retries}次后失败: ${lastError}`,
-      source: this.extractSource(url),
-      timestamp: new Date().toISOString()
-    };
-  }
-
   private delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  /**
+   * 从URL提取数据源名称
+   * @param url - 请求URL
+   * @returns 数据源名称
+   */
   private extractSource(url: string): string {
     if (url.includes('eastmoney')) return 'eastmoney';
     if (url.includes('tencent')) return 'tencent';
     if (url.includes('sina')) return 'sina';
-    return 'unknown';
-  }
-
-  // ========== 东方财富API ==========
-
-  /**
-   * 获取板块列表
-   */
-  async getSectorList(): Promise<ApiResponse<any>> {
-    const url = `${this.API_BASE.eastmoney}/sector?pn=1&pz=100&po=1&np=1&fltt=2&invt=2&fid=f62&fs=m:90+t:2&fields=f12,f14,f3,f62,f8,f20,f184`;
-    return this.getWithRetry(url);
+    if (url.includes('akshare')) return 'akshare';
+    return 'backend';
   }
 
   /**
-   * 获取板块成分股
+   * 创建超时信号
+   * @param timeoutMs - 超时毫秒数
+   * @returns AbortSignal
    */
-  async getSectorConstituents(sectorCode: string): Promise<ApiResponse<any>> {
-    const url = `${this.API_BASE.eastmoney}/sector/constituents?code=${sectorCode}`;
-    return this.getWithRetry(url);
+  private createTimeoutSignal(timeoutMs: number): AbortSignal {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), timeoutMs);
+    return controller.signal;
   }
 
   /**
-   * 获取股票行情
+   * 执行 fetch 请求
+   * @param url - 请求URL
+   * @param options - 请求选项
+   * @returns Response
    */
-  async getStockQuote(secid: string, fields: string): Promise<ApiResponse<any>> {
-    const url = `${this.API_BASE.eastmoney}/quote?secid=${secid}&fields=${fields}`;
-    return this.getWithRetry(url);
+  private async fetchWithTimeout(
+    url: string,
+    options: RequestInit & { timeout?: number }
+  ): Promise<Response> {
+    const { timeout = DEFAULT_OPTIONS.timeout, ...fetchOptions } = options;
+
+    const response = await fetch(url, {
+      ...fetchOptions,
+      signal: this.createTimeoutSignal(timeout),
+    });
+
+    return response;
   }
 
   /**
-   * 获取K线数据
+   * 处理 HTTP 响应
+   * @param response - fetch Response
+   * @returns 解析后的数据
    */
-  async getKLineData(secid: string, klt: string, fqt: string, lmt: number): Promise<ApiResponse<any>> {
-    const fields1 = 'f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13';
-    const fields2 = 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61';
-    const url = `${this.API_BASE.eastmoney}/kline?secid=${secid}&fields1=${fields1}&fields2=${fields2}&klt=${klt}&fqt=${fqt}&lmt=${lmt}&end=20500101`;
-    return this.getWithRetry(url);
-  }
+  private async handleResponse<T>(response: Response): Promise<T> {
+    if (!response.ok) {
+      const errorData: ErrorResponse = await response.json().catch(() => ({
+        code: ErrorCode.UNKNOWN_ERROR,
+        message: `HTTP ${response.status}: ${response.statusText}`,
+        timestamp: new Date().toISOString(),
+      }));
 
-  // ========== 腾讯API ==========
-
-  /**
-   * 获取腾讯K线数据
-   */
-  async getTencentKLine(code: string, start: string, end: string, limit: number, adjust: string = 'qfq'): Promise<ApiResponse<any>> {
-    const url = `${this.API_BASE.tencent}/kline?code=${code}&start=${start}&end=${end}&limit=${limit}&adjust=${adjust}`;
-    return this.getWithRetry(url);
-  }
-
-  /**
-   * 获取腾讯实时行情
-   */
-  async getTencentQuote(symbols: string): Promise<ApiResponse<any>> {
-    const url = `${this.API_BASE.tencent}/quote?s=${symbols}`;
-    return this.getWithRetry(url);
-  }
-
-  // ========== 多源数据获取（带优先级） ==========
-
-  /**
-   * 获取K线数据（多源优先级）
-   * 优先级: 东方财富 -> 腾讯
-   */
-  async getKLineDataWithFallback(symbol: string, timeframe: string, days: number): Promise<ApiResponse<any>> {
-    const secid = symbol.startsWith('6') ? `1.${symbol}` : `0.${symbol}`;
-    const klt = timeframe === '60' ? '60' : timeframe === '240' ? '240' : '101';
-    
-    // 尝试东方财富
-    const emResult = await this.getKLineData(secid, klt, '1', days);
-    if (emResult.data?.klines && emResult.data.klines.length > 0) {
-      console.log('[ApiClient] 东方财富K线数据成功');
-      return emResult;
+      throw new AppError(
+        errorData.code as ErrorCode,
+        errorData.message,
+        errorData.details
+      );
     }
-    
-    console.warn('[ApiClient] 东方财富K线失败，尝试腾讯');
-    
-    // 尝试腾讯
-    const market = symbol.startsWith('6') ? 'sh' : 'sz';
-    const endDate = new Date().toISOString().split('T')[0];
-    const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    
-    const tencentResult = await this.getTencentKLine(`${market}${symbol}`, startDate, endDate, days);
-    if (tencentResult.data) {
-      console.log('[ApiClient] 腾讯K线数据成功');
-      return tencentResult;
+
+    const data = await response.json();
+
+    // 处理后端统一响应格式
+    if (data.success === false) {
+      throw new AppError(
+        data.error?.code || ErrorCode.UNKNOWN_ERROR,
+        data.error?.message || '请求失败',
+        data.error?.details
+      );
     }
-    
+
+    return data.data || data;
+  }
+
+  /**
+   * 统一 GET 请求
+   * @param url - 请求URL
+   * @param options - 请求选项
+   * @returns API 响应
+   */
+  async get<T>(url: string, options?: RequestOptions): Promise<ApiResponse<T>> {
+    const startTime = Date.now();
+    const source = this.extractSource(url);
+
+    try {
+      const response = await this.fetchWithTimeout(url, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          ...options?.headers,
+        },
+        timeout: options?.timeout || DEFAULT_OPTIONS.timeout,
+      });
+
+      const data = await this.handleResponse<T>(response);
+      const duration = Date.now() - startTime;
+
+      logger.info(`API 请求成功: ${source}`, {
+        url,
+        duration,
+        source,
+      });
+
+      return {
+        data,
+        error: null,
+        source,
+        timestamp: new Date().toISOString(),
+        success: true,
+      };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const appError = error instanceof AppError ? error : createNetworkError(String(error));
+
+      logger.error(`API 请求失败: ${source}`, error, {
+        url,
+        duration,
+        source,
+        errorCode: appError.code,
+      });
+
+      return {
+        data: null,
+        error: appError.message,
+        source,
+        timestamp: new Date().toISOString(),
+        success: false,
+      };
+    }
+  }
+
+  /**
+   * 带重试的 GET 请求
+   * @param url - 请求URL
+   * @param options - 请求选项
+   * @returns API 响应
+   */
+  async getWithRetry<T>(url: string, options?: RequestOptions): Promise<ApiResponse<T>> {
+    const opts = { ...DEFAULT_OPTIONS, ...options };
+    let lastError: string | null = null;
+
+    for (let i = 0; i < opts.retries; i++) {
+      const result = await this.get<T>(url, opts);
+
+      if (result.success && result.data !== null) {
+        return result;
+      }
+
+      lastError = result.error;
+
+      if (i < opts.retries - 1) {
+        logger.warn(`API 请求重试 ${i + 1}/${opts.retries}: ${url}`);
+        await this.delay(opts.retryDelay * (i + 1));
+      }
+    }
+
+    logger.error(`API 请求重试耗尽: ${url}`, new Error(lastError || 'Unknown error'));
+
     return {
       data: null,
-      error: '所有数据源均失败',
-      source: 'all',
-      timestamp: new Date().toISOString()
+      error: `重试${opts.retries}次后失败: ${lastError}`,
+      source: this.extractSource(url),
+      timestamp: new Date().toISOString(),
+      success: false,
     };
+  }
+
+  /**
+   * POST 请求
+   * @param url - 请求URL
+   * @param body - 请求体
+   * @param options - 请求选项
+   * @returns API 响应
+   */
+  async post<T>(
+    url: string,
+    body: unknown,
+    options?: RequestOptions
+  ): Promise<ApiResponse<T>> {
+    const startTime = Date.now();
+    const source = this.extractSource(url);
+
+    try {
+      const response = await this.fetchWithTimeout(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          ...options?.headers,
+        },
+        body: JSON.stringify(body),
+        timeout: options?.timeout || DEFAULT_OPTIONS.timeout,
+      });
+
+      const data = await this.handleResponse<T>(response);
+      const duration = Date.now() - startTime;
+
+      logger.info(`API POST 请求成功: ${source}`, {
+        url,
+        duration,
+        source,
+      });
+
+      return {
+        data,
+        error: null,
+        source,
+        timestamp: new Date().toISOString(),
+        success: true,
+      };
+    } catch (error) {
+      const duration = Date.now() - startTime;
+      const appError = error instanceof AppError ? error : createNetworkError(String(error));
+
+      logger.error(`API POST 请求失败: ${source}`, error, {
+        url,
+        duration,
+        source,
+        errorCode: appError.code,
+      });
+
+      return {
+        data: null,
+        error: appError.message,
+        source,
+        timestamp: new Date().toISOString(),
+        success: false,
+      };
+    }
   }
 }
 
-// 导出单例实例
+/**
+ * 导出单例实例
+ */
 export const apiClient = ApiClient.getInstance();

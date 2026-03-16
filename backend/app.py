@@ -1,13 +1,68 @@
+"""
+Sonata Backend API
+股票分析和数据服务后端
+
+@module backend/app
+@version 2.5.0
+"""
+
 from flask import Flask, jsonify, request
+from flask_cors import CORS
 import numpy as np
 import requests
 import re
+import os
 from datetime import datetime, timedelta
+from typing import Dict, Any, Optional, List
 
+# 导入自定义模块
+from logger import init_logger, get_logger, LogLevel
+from errors import (
+    AppError, ApiError, DataError, ErrorCode,
+    create_network_error, create_timeout_error, create_stock_not_found_error,
+    handle_exception, error_response
+)
+from middleware import init_middleware, api_response, error_handler
+
+# 初始化 Flask 应用
 app = Flask(__name__)
+CORS(app)
 
-def convert_to_eastmoney_code(code):
-    """转换为东方财富代码格式"""
+# 初始化日志和中间件
+init_logger(name="sonata", level=LogLevel.INFO)
+logger = get_logger()
+init_middleware(app)
+
+# 导入健康检查和限流模块
+try:
+    from health import get_health_status, check_eastmoney_api, check_tencent_api
+    from rate_limiter import (
+        APIClientWithRetry, ip_rate_limiter, user_rate_limiter,
+        eastmoney_circuit_breaker, tencent_circuit_breaker,
+        with_retry, RateLimitExceeded
+    )
+    HAS_RATE_LIMITER = True
+except ImportError:
+    HAS_RATE_LIMITER = False
+    logger.warning("Rate limiter module not found, running without rate limiting")
+
+# 创建带重试的API客户端
+if HAS_RATE_LIMITER:
+    api_client = APIClientWithRetry(max_retries=3, timeout=5)
+else:
+    api_client = None
+
+
+def convert_to_eastmoney_code(code: str) -> str:
+    """
+    转换为东方财富代码格式
+
+    Args:
+        code: 股票代码（如 'sh600519' 或 '600519'）
+
+    Returns:
+        东方财富格式的代码（如 '1.600519'）
+    """
     if code.startswith('sh'):
         return f"1.{code[2:]}"
     elif code.startswith('sz'):
@@ -17,8 +72,17 @@ def convert_to_eastmoney_code(code):
     else:
         return f"0.{code}"
 
-def convert_to_tencent_code(code):
-    """转换为腾讯代码格式"""
+
+def convert_to_tencent_code(code: str) -> str:
+    """
+    转换为腾讯代码格式
+
+    Args:
+        code: 股票代码（如 'sh600519' 或 '600519'）
+
+    Returns:
+        腾讯格式的代码（如 'sh600519'）
+    """
     if code.startswith('sh'):
         return f"sh{code[2:]}"
     elif code.startswith('sz'):
@@ -28,20 +92,55 @@ def convert_to_tencent_code(code):
     else:
         return f"sz{code}"
 
+
 class DataFetcher:
-    """多层级数据获取器 - 5层冗余"""
-    
+    """
+    多层级数据获取器 - 5层冗余 + 熔断保护
+
+    提供从多个数据源获取股票数据的能力，包括：
+    1. 东方财富（主要）
+    2. 腾讯财经
+    3. 新浪财经
+    4. 网易财经
+    5. AkShare
+    """
+
     @staticmethod
-    def fetch_from_eastmoney(stock_code):
-        """层级1: 东方财富获取数据"""
+    def fetch_from_eastmoney(stock_code: str) -> Optional[Dict[str, Any]]:
+        """
+        从东方财富获取数据（带熔断保护）
+
+        Args:
+            stock_code: 股票代码
+
+        Returns:
+            股票数据字典或 None
+        """
+        if HAS_RATE_LIMITER and not eastmoney_circuit_breaker.can_execute():
+            logger.warning("东方财富API熔断中，跳过请求")
+            return None
+
         try:
             secid = convert_to_eastmoney_code(stock_code)
             url = f'https://push2.eastmoney.com/api/qt/stock/get?secid={secid}&fields=f43,f44,f45,f46,f47,f48,f49,f50,f51,f52,f57,f58,f60,f170'
-            response = requests.get(url, timeout=5)
+
+            if HAS_RATE_LIMITER:
+                response = api_client.get(url, headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                })
+            else:
+                response = requests.get(url, timeout=5, headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                })
+
             data = response.json()
-            
+
             if data.get('data'):
                 d = data['data']
+                if HAS_RATE_LIMITER:
+                    eastmoney_circuit_breaker.record_success()
+
+                logger.info(f"东方财富数据获取成功: {stock_code}")
                 return {
                     'name': d.get('f58', ''),
                     'current_price': float(d.get('f43', 0)) / 100,
@@ -53,22 +152,47 @@ class DataFetcher:
                     'yesterday_close': float(d.get('f60', 0)) / 100,
                     'change_percent': float(d.get('f170', 0)) / 100
                 }
+            else:
+                if HAS_RATE_LIMITER:
+                    eastmoney_circuit_breaker.record_failure()
+                logger.warning(f"东方财富API返回空数据: {stock_code}")
+
         except Exception as e:
-            print(f"东方财富API失败: {e}")
+            logger.error(f"东方财富API失败: {e}", exc_info=True)
+            if HAS_RATE_LIMITER:
+                eastmoney_circuit_breaker.record_failure()
+
         return None
-    
+
     @staticmethod
-    def fetch_from_tencent(stock_code):
-        """层级2: 腾讯获取数据"""
+    def fetch_from_tencent(stock_code: str) -> Optional[Dict[str, Any]]:
+        """从腾讯获取数据（带熔断保护）"""
+        if HAS_RATE_LIMITER and not tencent_circuit_breaker.can_execute():
+            logger.warning("腾讯API熔断中，跳过请求")
+            return None
+
         try:
             tencent_code = convert_to_tencent_code(stock_code)
             url = f'http://qt.gtimg.cn/q={tencent_code}'
-            response = requests.get(url, timeout=5)
+
+            if HAS_RATE_LIMITER:
+                response = api_client.get(url, headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                })
+            else:
+                response = requests.get(url, timeout=5, headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                })
+
             text = response.text
-            
             match = re.search(r'v_(?:sh|sz)(\d+)="([^"]+)"', text)
+
             if match:
                 fields = match.group(2).split('~')
+                if HAS_RATE_LIMITER:
+                    tencent_circuit_breaker.record_success()
+
+                logger.info(f"腾讯数据获取成功: {stock_code}")
                 return {
                     'name': fields[1],
                     'current_price': float(fields[3]),
@@ -80,24 +204,34 @@ class DataFetcher:
                     'yesterday_close': float(fields[2]),
                     'change_percent': float(fields[32]) if len(fields) > 32 else 0
                 }
+            else:
+                if HAS_RATE_LIMITER:
+                    tencent_circuit_breaker.record_failure()
+                logger.warning(f"腾讯API返回格式异常: {stock_code}")
+
         except Exception as e:
-            print(f"腾讯API失败: {e}")
+            logger.error(f"腾讯API失败: {e}", exc_info=True)
+            if HAS_RATE_LIMITER:
+                tencent_circuit_breaker.record_failure()
+
         return None
-    
+
     @staticmethod
-    def fetch_from_sina(stock_code):
-        """层级3: 新浪财经获取数据"""
+    def fetch_from_sina(stock_code: str) -> Optional[Dict[str, Any]]:
+        """从新浪财经获取数据"""
         try:
             sina_code = convert_to_tencent_code(stock_code)
             url = f'https://hq.sinajs.cn/list={sina_code}'
             headers = {'Referer': 'https://finance.sina.com.cn'}
+
             response = requests.get(url, timeout=5, headers=headers)
             text = response.text
-            
+
             match = re.search(r'var hq_str_(?:sh|sz)(\d+)="([^"]*)"', text)
             if match and match.group(2):
                 fields = match.group(2).split(',')
                 if len(fields) >= 8:
+                    logger.info(f"新浪数据获取成功: {stock_code}")
                     return {
                         'name': fields[0],
                         'current_price': float(fields[3]),
@@ -109,22 +243,24 @@ class DataFetcher:
                         'yesterday_close': float(fields[2]),
                         'change_percent': float(fields[3]) / float(fields[2]) * 100 - 100 if float(fields[2]) > 0 else 0
                     }
+            logger.warning(f"新浪API返回格式异常: {stock_code}")
         except Exception as e:
-            print(f"新浪API失败: {e}")
+            logger.error(f"新浪API失败: {e}")
+
         return None
-    
+
     @staticmethod
-    def fetch_from_163(stock_code):
-        """层级4: 网易财经获取数据"""
+    def fetch_from_163(stock_code: str) -> Optional[Dict[str, Any]]:
+        """从网易财经获取数据"""
         try:
-            code = stock_code[2:] if stock_code.startswith(('sh', 'sz')) else stock_code
             url = f'http://api.money.126.net/data/feed/{convert_to_tencent_code(stock_code)}'
             response = requests.get(url, timeout=5)
             data = response.json()
-            
+
             key = list(data.keys())[0] if data else None
             if key and data[key]:
                 d = data[key]
+                logger.info(f"网易数据获取成功: {stock_code}")
                 return {
                     'name': d.get('name', ''),
                     'current_price': float(d.get('price', 0)),
@@ -136,22 +272,25 @@ class DataFetcher:
                     'yesterday_close': float(d.get('yestclose', 0)),
                     'change_percent': float(d.get('updown', 0)) / float(d.get('yestclose', 1)) * 100
                 }
+            logger.warning(f"网易API返回空数据: {stock_code}")
         except Exception as e:
-            print(f"网易API失败: {e}")
+            logger.error(f"网易API失败: {e}")
+
         return None
-    
+
     @staticmethod
-    def fetch_from_akshare(stock_code):
-        """层级5: AkShare获取数据"""
+    def fetch_from_akshare(stock_code: str) -> Optional[Dict[str, Any]]:
+        """从AkShare获取数据"""
         try:
             import akshare as ak
             code = stock_code[2:] if stock_code.startswith(('sh', 'sz')) else stock_code
-            
+
             df = ak.stock_zh_a_spot_em()
             stock_row = df[df['代码'] == code]
-            
+
             if not stock_row.empty:
                 row = stock_row.iloc[0]
+                logger.info(f"AkShare数据获取成功: {stock_code}")
                 return {
                     'name': row['名称'],
                     'current_price': float(row['最新价']),
@@ -163,19 +302,24 @@ class DataFetcher:
                     'yesterday_close': float(row['昨收']),
                     'change_percent': float(row['涨跌幅'])
                 }
+            logger.warning(f"AkShare未找到股票: {stock_code}")
         except Exception as e:
-            print(f"AkShare失败: {e}")
+            logger.error(f"AkShare失败: {e}")
+
         return None
-    
+
     @staticmethod
-    def fetch_historical_from_eastmoney(stock_code, days=60):
+    def fetch_historical_from_eastmoney(stock_code: str, days: int = 60) -> Optional[List[Dict[str, Any]]]:
         """从东方财富获取历史K线数据"""
         try:
             secid = convert_to_eastmoney_code(stock_code)
             url = f'https://push2his.eastmoney.com/api/qt/stock/kline/get?secid={secid}&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=101&fqt=0&end=20500101&lmt={days}'
-            response = requests.get(url, timeout=10)
+
+            response = requests.get(url, timeout=10, headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            })
             data = response.json()
-            
+
             if data.get('data') and data['data'].get('klines'):
                 klines = data['data']['klines']
                 prices = []
@@ -190,14 +334,25 @@ class DataFetcher:
                             'low': float(parts[4]),
                             'volume': int(float(parts[5]))
                         })
+                logger.info(f"历史数据获取成功: {stock_code}, {len(prices)}条")
                 return prices
+            logger.warning(f"历史数据API返回空: {stock_code}")
         except Exception as e:
-            print(f"东方财富历史数据失败: {e}")
+            logger.error(f"东方财富历史数据失败: {e}")
+
         return None
-    
+
     @staticmethod
-    def fetch_all_data(stock_code):
-        """多层级数据获取 - 5层冗余"""
+    def fetch_all_data(stock_code: str) -> tuple:
+        """
+        多层级数据获取 - 5层冗余
+
+        Args:
+            stock_code: 股票代码
+
+        Returns:
+            (数据, 历史数据, 数据源名称) 元组
+        """
         sources = [
             ('eastmoney', DataFetcher.fetch_from_eastmoney),
             ('tencent', DataFetcher.fetch_from_tencent),
@@ -205,38 +360,54 @@ class DataFetcher:
             ('163', DataFetcher.fetch_from_163),
             ('akshare', DataFetcher.fetch_from_akshare)
         ]
-        
+
         data = None
         source_name = None
-        
+
         for name, fetch_func in sources:
-            data = fetch_func(stock_code)
-            if data is not None:
-                source_name = name
-                print(f"数据获取成功: {name}")
-                break
-        
+            try:
+                data = fetch_func(stock_code)
+                if data is not None:
+                    source_name = name
+                    logger.info(f"数据获取成功: {name}")
+                    break
+            except Exception as e:
+                logger.warning(f"数据源 {name} 失败: {e}")
+                continue
+
         historical = DataFetcher.fetch_historical_from_eastmoney(stock_code)
-        
+
         return data, historical, source_name
 
-def monte_carlo_simulation(stock_code, days=7, simulations=10000):
-    """蒙特卡洛模拟股票未来价格"""
+
+def monte_carlo_simulation(stock_code: str, days: int = 7, simulations: int = 10000) -> Optional[Dict[str, Any]]:
+    """
+    蒙特卡洛模拟股票未来价格
+
+    Args:
+        stock_code: 股票代码
+        days: 模拟天数
+        simulations: 模拟次数
+
+    Returns:
+        模拟结果字典
+    """
     data, historical, source = DataFetcher.fetch_all_data(stock_code)
-    
+
     if data is None:
+        logger.error(f"无法获取股票数据: {stock_code}")
         return None
-    
+
     if historical and len(historical) >= 30:
         returns = []
         for i in range(1, len(historical)):
             ret = (historical[i]['close'] - historical[i-1]['close']) / historical[i-1]['close']
             returns.append(ret)
-        
+
         mean_return = np.mean(returns)
         std_return = np.std(returns)
         current_price = historical[-1]['close']
-        
+
         today_data = {
             'open': historical[-1]['open'],
             'high': historical[-1]['high'],
@@ -257,7 +428,8 @@ def monte_carlo_simulation(stock_code, days=7, simulations=10000):
             'market_cap': data.get('market_cap', 0),
             'yesterday_close': data['yesterday_close']
         }
-    
+
+    # 运行模拟
     simulation_results = []
     for _ in range(simulations):
         daily_returns = np.random.normal(mean_return, std_return, days)
@@ -265,14 +437,15 @@ def monte_carlo_simulation(stock_code, days=7, simulations=10000):
         for ret in daily_returns:
             price_series.append(price_series[-1] * (1 + ret))
         simulation_results.append(price_series[-1])
-    
+
     sim_array = np.array(simulation_results)
     predicted_price = np.median(sim_array)
     price_5th = np.percentile(sim_array, 5)
     price_95th = np.percentile(sim_array, 95)
-    
+
     change_pct = ((predicted_price - current_price) / current_price) * 100
-    
+
+    # 生成建议
     if change_pct > 5:
         suggestion = "强烈看多"
         suggestion_detail = f"价格¥{current_price:.2f}具有较大上涨空间，建议分批买入，仓位30-50%，止损¥{price_5th:.2f}"
@@ -289,7 +462,9 @@ def monte_carlo_simulation(stock_code, days=7, simulations=10000):
         suggestion = "谨慎"
         suggestion_detail = "价格面临下行压力，建议观望或减仓，注意控制仓位，严格止损。"
         suggestion_color = "#999999"
-    
+
+    logger.info(f"蒙特卡洛模拟完成: {stock_code}, 预测价格: {predicted_price:.2f}")
+
     return {
         "current_price": round(current_price, 2),
         "predicted_price": round(predicted_price, 2),
@@ -314,30 +489,44 @@ def monte_carlo_simulation(stock_code, days=7, simulations=10000):
         "data_source": source
     }
 
+
+# ============================================================================
+# API 路由
+# ============================================================================
+
 @app.route('/api/stock-analysis', methods=['GET'])
+@error_handler
 def stock_analysis():
+    """股票分析 API"""
     stock_code = request.args.get('code', 'sh600519')
+    logger.info(f"股票分析请求: {stock_code}")
+
     result = monte_carlo_simulation(stock_code)
     if result is None:
-        return jsonify({"error": "无法获取股票数据，所有API源均失败"}), 400
-    return jsonify(result)
+        raise create_stock_not_found_error(stock_code)
+
+    return jsonify(api_response(data=result))
+
 
 @app.route('/api/hot-sectors', methods=['GET'])
+@error_handler
 def hot_sectors():
     """获取热门板块及精选股票"""
+    logger.info("热门板块请求")
+
     try:
-        # 获取东方财富板块数据
         url = 'https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=50&po=1&np=1&fltt=2&invt=2&fid=f62&fs=m:90+t:2&fields=f12,f14,f3,f62,f8,f20,f184'
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=10, headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
         data = response.json()
-        
+
         if not data.get('data') or not data['data'].get('diff'):
-            return jsonify({"success": False, "error": "无法获取板块数据"}), 400
-        
+            raise AppError(ErrorCode.API_RESPONSE_INVALID, "无法获取板块数据")
+
         sectors = []
         for item in data['data']['diff'].values():
             main_force_net = float(item.get('f62', 0))
-            # 只保留主力净流入>1000万的板块
             if main_force_net > 10_000_000:
                 sectors.append({
                     "sector": {
@@ -370,396 +559,111 @@ def hot_sectors():
                         "isRealData": True
                     }
                 })
-        
-        # 只返回前6个板块
+
         sectors = sectors[:6]
-        
-        return jsonify({
-            "success": True,
-            "data": sectors,
-            "fromCache": False,
-            "timestamp": datetime.now().isoformat()
-        })
-        
+        logger.info(f"热门板块获取成功: {len(sectors)}个")
+
+        return jsonify(api_response(data=sectors))
+
+    except AppError:
+        raise
     except Exception as e:
-        print(f"获取热门板块失败: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        logger.error(f"获取热门板块失败: {e}", exc_info=True)
+        raise AppError(ErrorCode.API_REQUEST_FAILED, "获取热门板块失败", original_error=e)
+
 
 @app.route('/api/health', methods=['GET'])
+@error_handler
 def health_check():
     """健康检查"""
     try:
-        # 测试获取一个股票数据
         test_data = DataFetcher.fetch_from_eastmoney('000001')
         if test_data:
-            return jsonify({
+            logger.debug("健康检查通过")
+            return jsonify(api_response(data={
                 "status": "healthy",
                 "dataSource": "eastmoney",
-                "connection": "ok",
-                "timestamp": datetime.now().isoformat()
-            })
+                "connection": "ok"
+            }))
     except Exception as e:
-        print(f"健康检查失败: {e}")
-    
-    return jsonify({
-        "status": "unhealthy",
-        "error": "数据连接异常"
-    }), 503
+        logger.error(f"健康检查失败: {e}")
+
+    raise AppError(ErrorCode.API_UNAVAILABLE, "数据连接异常")
+
 
 @app.route('/api/test', methods=['GET'])
+@error_handler
 def test():
-    return jsonify({"status": "OK", "message": "Sonata API running"})
-
-# ========== 新增：热门板块和精选股票池 API ==========
-
-@app.route('/api/hot-sectors', methods=['GET'])
-def get_hot_sectors():
-    """
-    获取热门板块及精选股票池
-    支持缓存和强制刷新
-    """
-    try:
-        # 获取热门板块数据（从东方财富）
-        sectors = fetch_hot_sectors_from_eastmoney()
-        
-        if not sectors or len(sectors) == 0:
-            return jsonify({
-                "success": False,
-                "error": "无法获取板块数据",
-                "isRealData": False
-            }), 400
-        
-        # 为每个板块获取成分股并精选股票
-        results = []
-        for sector in sectors[:6]:  # 只取前6个板块
-            try:
-                # 获取成分股
-                constituents = fetch_sector_constituents(sector['code'])
-                
-                # 精选股票（最多3只）
-                selected_stocks = []
-                if constituents and len(constituents) > 0:
-                    selected_stocks = select_stocks(constituents[:20], 3)  # 只分析前20只
-                
-                results.append({
-                    "sector": sector,
-                    "constituents": constituents,
-                    "selectedStocks": selected_stocks,
-                    "analysisTimestamp": datetime.now().isoformat(),
-                    "dataQuality": {
-                        "sectorValid": sector.get('metrics', {}).get('mainForceNet', 0) > 10_000_000,
-                        "constituentsCount": len(constituents),
-                        "selectedCount": len(selected_stocks),
-                        "isRealData": True
-                    }
-                })
-            except Exception as e:
-                print(f"处理板块 {sector.get('name', 'unknown')} 失败: {e}")
-                continue
-        
-        return jsonify({
-            "success": True,
-            "data": results,
-            "updatePolicy": "每4小时自动更新",
-            "isRealData": True,
-            "timestamp": datetime.now().isoformat()
-        })
-        
-    except Exception as e:
-        print(f"获取热门板块失败: {e}")
-        return jsonify({
-            "success": False,
-            "error": str(e),
-            "isRealData": False
-        }), 500
-
-def fetch_hot_sectors_from_eastmoney():
-    """从东方财富获取热门板块"""
-    url = 'https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=100&po=1&np=1&fltt=2&invt=2&fid=f62&fs=m:90+t:2&fields=f12,f14,f3,f62,f8,f20,f184'
-    
-    try:
-        response = requests.get(url, timeout=10, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        })
-        data = response.json()
-        
-        if not data.get('data') or not data['data'].get('diff'):
-            return []
-        
-        sectors = []
-        for key, item in data['data']['diff'].items():
-            main_force_net = float(item.get('f62', 0))
-            # 只保留主力净流入>1000万的板块
-            if main_force_net > 10_000_000:
-                sector = {
-                    "code": item.get('f12', ''),
-                    "name": item.get('f14', ''),
-                    "score": 0,  # 将在后续计算
-                    "rank": 0,   # 将在后续设置
-                    "changePercent": float(item.get('f3', 0)),
-                    "dimensions": {
-                        "momentum": min(100, max(0, 50 + float(item.get('f3', 0)) * 2)),
-                        "capital": min(100, max(0, 50 + main_force_net / 1e8)),
-                        "technical": min(100, max(0, float(item.get('f8', 0)) * 10)),
-                        "fundamental": min(100, max(0, np.log10(float(item.get('f20', 1)) / 1e8) * 10))
-                    },
-                    "trend": calculate_trend(float(item.get('f3', 0)), main_force_net),
-                    "topStocks": [],  # 将在后续填充
-                    "metrics": {
-                        "mainForceNet": main_force_net,
-                        "turnoverRate": float(item.get('f8', 0)),
-                        "rsi": float(item.get('f184', 50)) if float(item.get('f184', 0)) > 0 else 50,
-                        "marketValue": float(item.get('f20', 0)),
-                        "peRatio": 0
-                    },
-                    "source": "eastmoney",
-                    "timestamp": datetime.now().isoformat()
-                }
-                # 计算综合评分
-                sector["score"] = int(
-                    sector["dimensions"]["momentum"] * 0.30 +
-                    sector["dimensions"]["capital"] * 0.30 +
-                    sector["dimensions"]["technical"] * 0.20 +
-                    sector["dimensions"]["fundamental"] * 0.20
-                )
-                sectors.append(sector)
-        
-        # 排序并设置排名
-        sectors.sort(key=lambda x: x["score"], reverse=True)
-        for i, sector in enumerate(sectors):
-            sector["rank"] = i + 1
-        
-        # 获取每个板块的成分股（前5只）
-        for sector in sectors[:6]:
-            try:
-                constituents = fetch_sector_constituents_with_names(sector["code"])
-                sector["topStocks"] = constituents[:5]
-            except Exception as e:
-                print(f"获取板块 {sector['name']} 成分股失败: {e}")
-                sector["topStocks"] = []
-        
-        return sectors[:6]
-        
-    except Exception as e:
-        print(f"获取板块数据失败: {e}")
-        return []
-
-def calculate_trend(change_percent, main_force_net):
-    """计算板块趋势"""
-    score = 50 + change_percent * 2 + (main_force_net / 1e8)
-    if score >= 80 and change_percent > 3:
-        return "强势热点"
-    elif score >= 70:
-        return "持续热点"
-    elif change_percent > 5:
-        return "新兴热点"
-    elif change_percent < -3:
-        return "降温"
-    return "观察"
-
-def fetch_sector_constituents(sector_code):
-    """获取板块成分股代码列表"""
-    url = f'https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=500&po=1&np=1&fltt=2&invt=2&fid=f12&fs=b:{sector_code}&fields=f12,f14'
-    
-    try:
-        response = requests.get(url, timeout=10, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        })
-        data = response.json()
-        
-        if data.get('data') and data['data'].get('diff'):
-            return [item.get('f12') for item in data['data']['diff'].values()]
-    except Exception as e:
-        print(f"获取板块成分股失败 {sector_code}: {e}")
-    
-    return []
-
-def fetch_sector_constituents_with_names(sector_code):
-    """获取板块成分股（包含名称和涨跌幅）"""
-    url = f'https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=20&po=1&np=1&fltt=2&invt=2&fid=f12&fs=b:{sector_code}&fields=f12,f14,f3'
-    
-    try:
-        response = requests.get(url, timeout=10, headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        })
-        data = response.json()
-        
-        if data.get('data') and data['data'].get('diff'):
-            return [
-                {
-                    "code": item.get('f12'),
-                    "name": item.get('f14'),
-                    "changePercent": float(item.get('f3', 0))
-                }
-                for item in data['data']['diff'].values()
-            ]
-    except Exception as e:
-        print(f"获取板块成分股详情失败 {sector_code}: {e}")
-    
-    return []
-
-def select_stocks(stock_codes, limit=3):
-    """
-    精选股票 - 基于财务指标和技术面
-    简化版选股逻辑
-    """
-    selected = []
-    
-    for code in stock_codes:
-        try:
-            quote = DataFetcher.fetch_from_eastmoney(code)
-            if not quote:
-                continue
-            
-            # 基础财务筛选
-            if quote.get('current_price', 0) <= 0:
-                continue
-            
-            # 计算简单评分
-            score = 50
-            
-            # 估值评分
-            pe = quote.get('market_cap', 0)  # 简化：用市值代替
-            if pe > 100:
-                score += 20
-            
-            # 成长评分（简化）
-            score += 15
-            
-            # 技术评分
-            change = quote.get('change_percent', 0)
-            if change > 0:
-                score += min(20, change * 2)
-            
-            # 创建推荐对象
-            recommendation = {
-                "code": code,
-                "name": quote.get('name', ''),
-                "score": min(100, score),
-                "confidence": 60,
-                "factors": {
-                    "valuation": 50,
-                    "growth": 50,
-                    "scale": 50,
-                    "momentum": 50,
-                    "quality": 50,
-                    "support": 50
-                },
-                "metrics": {
-                    "pe": 0,
-                    "peg": 0,
-                    "pb": 0,
-                    "roe": 0,
-                    "profitGrowth": 0,
-                    "marketCap": quote.get('market_cap', 0),
-                    "currentPrice": quote.get('current_price', 0),
-                    "support": quote.get('current_price', 0) * 0.95,
-                    "resistance": quote.get('current_price', 0) * 1.1,
-                    "distanceToSupport": -5,
-                    "upwardSpace": 10
-                },
-                "recommendation": "推荐" if score >= 70 else "谨慎推荐",
-                "analysis": f"{quote.get('name', '')}当前价格{quote.get('current_price', 0):.2f}元",
-                "sectorInfo": None
-            }
-            selected.append(recommendation)
-            
-        except Exception as e:
-            print(f"选股分析失败 {code}: {e}")
-            continue
-    
-    # 按评分排序
-    selected.sort(key=lambda x: x['score'], reverse=True)
-    return selected[:limit]
+    """测试接口"""
+    return jsonify(api_response(message="Sonata API running"))
 
 
 @app.route('/api/stock/<stock_code>/monte-carlo', methods=['GET'])
-def get_stock_monte_carlo(stock_code):
-    """
-    获取个股蒙特卡洛分析
-    前端 useMonteCarlo hook 调用此接口
-    """
-    try:
-        # 获取股票基本信息
-        stock_data = DataFetcher.fetch_from_eastmoney(stock_code)
-        if not stock_data:
-            stock_data = DataFetcher.fetch_from_tencent(stock_code)
-        
-        if not stock_data:
-            return jsonify({
-                "success": False,
-                "error": "无法获取股票数据"
-            }), 400
-        
-        # 运行蒙特卡洛模拟
-        mc_result = monte_carlo_simulation(stock_code)
-        
-        if not mc_result:
-            return jsonify({
-                "success": False,
-                "error": "蒙特卡洛模拟失败"
-            }), 400
-        
-        # 转换为前端需要的格式
-        return jsonify({
-            "success": True,
-            "stock": {
-                "code": stock_code,
-                "name": stock_data.get('name', ''),
-                "currentPrice": stock_data.get('current_price', 0)
-            },
-            "monteCarlo": {
-                "scenarios": [
-                    {
-                        "type": "乐观",
-                        "probability": 25,
-                        "priceRange": [mc_result.get('expected_price', 0) * 1.05, mc_result.get('expected_price', 0) * 1.15],
-                        "expectedReturn": 10.0,
-                        "description": f"价格有25%概率上涨至￥{mc_result.get('expected_price', 0) * 1.05:.2f}-￥{mc_result.get('expected_price', 0) * 1.15:.2f}"
-                    },
-                    {
-                        "type": "基准",
-                        "probability": 50,
-                        "priceRange": [mc_result.get('expected_price', 0) * 0.95, mc_result.get('expected_price', 0) * 1.05],
-                        "expectedReturn": 0.0,
-                        "description": f"价格在￥{mc_result.get('expected_price', 0) * 0.95:.2f}-￥{mc_result.get('expected_price', 0) * 1.05:.2f}区间震荡"
-                    },
-                    {
-                        "type": "悲观",
-                        "probability": 25,
-                        "priceRange": [mc_result.get('expected_price', 0) * 0.85, mc_result.get('expected_price', 0) * 0.95],
-                        "expectedReturn": -10.0,
-                        "description": f"价格有25%概率下跌至￥{mc_result.get('expected_price', 0) * 0.85:.2f}-￥{mc_result.get('expected_price', 0) * 0.95:.2f}"
-                    }
-                ],
-                "upProbability": mc_result.get('up_probability', 50),
-                "downProbability": 100 - mc_result.get('up_probability', 50),
-                "expectedPrice": mc_result.get('expected_price', 0),
-                "riskRewardRatio": mc_result.get('risk_reward_ratio', 1.0),
-                "derivationSteps": [
-                    "基于60天历史价格数据计算波动率",
-                    f"当前价格: ￥{stock_data.get('current_price', 0):.2f}",
-                    f"预期价格: ￥{mc_result.get('expected_price', 0):.2f}",
-                    f"上涨概率: {mc_result.get('up_probability', 50)}%"
-                ],
-                "statistics": {
-                    "median": mc_result.get('expected_price', 0),
-                    "mean": mc_result.get('expected_price', 0),
-                    "stdDev": mc_result.get('volatility', 0.02)
-                }
-            }
-        })
-        
-    except Exception as e:
-        print(f"蒙特卡洛API错误: {e}")
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
+@error_handler
+def get_stock_monte_carlo(stock_code: str):
+    """获取个股蒙特卡洛分析"""
+    logger.info(f"蒙特卡洛分析请求: {stock_code}")
 
+    stock_data = DataFetcher.fetch_from_eastmoney(stock_code)
+    if not stock_data:
+        stock_data = DataFetcher.fetch_from_tencent(stock_code)
+
+    if not stock_data:
+        raise create_stock_not_found_error(stock_code)
+
+    mc_result = monte_carlo_simulation(stock_code)
+    if not mc_result:
+        raise AppError(ErrorCode.ANALYSIS_FAILED, "蒙特卡洛模拟失败")
+
+    return jsonify(api_response(data={
+        "stock": {
+            "code": stock_code,
+            "name": stock_data.get('name', ''),
+            "currentPrice": stock_data.get('current_price', 0)
+        },
+        "monteCarlo": {
+            "scenarios": [
+                {
+                    "type": "乐观",
+                    "probability": 25,
+                    "priceRange": [mc_result.get('predicted_price', 0) * 1.05, mc_result.get('predicted_price', 0) * 1.15],
+                    "expectedReturn": 10.0,
+                    "description": f"价格有25%概率上涨"
+                },
+                {
+                    "type": "基准",
+                    "probability": 50,
+                    "priceRange": [mc_result.get('predicted_price', 0) * 0.95, mc_result.get('predicted_price', 0) * 1.05],
+                    "expectedReturn": 0.0,
+                    "description": "价格在基准区间震荡"
+                },
+                {
+                    "type": "悲观",
+                    "probability": 25,
+                    "priceRange": [mc_result.get('predicted_price', 0) * 0.85, mc_result.get('predicted_price', 0) * 0.95],
+                    "expectedReturn": -10.0,
+                    "description": "价格有25%概率下跌"
+                }
+            ],
+            "upProbability": 50 + mc_result.get('change_pct', 0),
+            "downProbability": 50 - mc_result.get('change_pct', 0),
+            "expectedPrice": mc_result.get('predicted_price', 0),
+            "riskRewardRatio": 1.0,
+            "suggestion": mc_result.get('suggestion', ''),
+            "suggestionDetail": mc_result.get('suggestion_detail', '')
+        }
+    }))
+
+
+# ============================================================================
+# 主程序入口
+# ============================================================================
 
 if __name__ == '__main__':
-    import os
     port = int(os.environ.get('PORT', 5000))
-    print(f"Starting Flask backend on http://0.0.0.0:{port}")
-    app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
+    debug = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
+
+    logger.info(f"Starting Flask backend on http://0.0.0.0:{port}")
+    logger.info(f"Debug mode: {debug}")
+
+    app.run(host='0.0.0.0', port=port, debug=debug, threaded=True)

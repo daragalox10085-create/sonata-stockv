@@ -1,0 +1,65 @@
+# 依赖
+node_modules
+npm-debug.log
+yarn-error.log
+package-lock.json
+yarn.lock
+
+# 构建输出
+dist
+build
+*.tgz
+
+# 开发环境
+.env
+.env.local
+.env.*.local
+
+# 编辑器
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 日志
+logs
+*.log
+
+# 测试
+coverage
+.nyc_output
+
+# 缓存
+.cache
+*.cache
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv/
+ENV/
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# CI/CD
+.github
+.travis.yml
+.gitlab-ci.yml
+
+# 其他
+*.md
+!README.md
+LICENSE
+CHANGELOG
