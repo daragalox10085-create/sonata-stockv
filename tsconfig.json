@@ -17,6 +17,6 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src"],
-  "exclude": ["src/routes", "src/services/stockApi.ts", "src/services/webSearchApi.ts", "src/services/klineApi.ts", "src/services/searchApi.ts"],
+  "exclude": ["src/routes", "src/services/stockApi.ts", "src/services/webSearchApi.ts", "src/services/klineApi.ts", "src/services/searchApi.ts", "src/__tests__"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
