@@ -61,12 +61,12 @@ export interface ApiConfig {
   };
 }
 
-// 基础配置
+// 基础配置 - 直连模式
 const baseConfig: Omit<ApiConfig, 'env'> = {
   sources: {
     tencent: {
       name: '腾讯财经',
-      baseUrl: '/api/tencent',
+      baseUrl: 'https://qt.gtimg.cn',
       timeout: 5000,
       priority: 1,
       enabled: true,
@@ -84,7 +84,7 @@ const baseConfig: Omit<ApiConfig, 'env'> = {
     },
     sina: {
       name: '新浪财经',
-      baseUrl: '/api/sina',
+      baseUrl: 'https://hq.sinajs.cn',
       timeout: 5000,
       priority: 3,
       enabled: true,

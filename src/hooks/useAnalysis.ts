@@ -1,7 +1,7 @@
 /**
  * Sonata Analysis Hooks
  * React hooks for accessing analysis data
- * 版本: v2.0
+ * 版本：v2.0
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -28,7 +28,7 @@ interface UseMonteCarloReturn {
 
 /**
  * 获取热门板块及精选股票
- * 修复：直接调用东方财富API，不依赖后端服务
+ * 修复：通过 /api/eastmoney/sector 代理调用，避免直接访问外部 API
  */
 export function useHotSectors(): UseHotSectorsReturn {
   const [data, setData] = useState<PipelineResult[] | null>(null);
@@ -41,7 +41,7 @@ export function useHotSectors(): UseHotSectorsReturn {
     setError(null);
     
     try {
-      // 优先尝试后端API
+      // 优先尝试后端 API
       const backendUrl = forceRefresh 
         ? '/api/hot-sectors?refresh=true' 
         : '/api/hot-sectors';
@@ -58,11 +58,22 @@ export function useHotSectors(): UseHotSectorsReturn {
           }
         }
       } catch (e) {
-        console.log('后端API不可用，直接调用东方财富API');
+        console.log('后端 API 不可用，使用代理调用东方财富 API');
       }
       
-      // 后端不可用，直接调用东方财富API
-      const eastmoneyUrl = 'https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=50&po=1&np=1&fltt=2&invt=2&fid=f62&fs=m:90+t:2&fields=f12,f14,f3,f62,f8,f20,f184';
+      // 后端不可用，通过代理调用东方财富 API
+      const params = new URLSearchParams({
+        pn: '1',
+        pz: '50',
+        po: '1',
+        np: '1',
+        fltt: '2',
+        invt: '2',
+        fid: 'f62',
+        fs: 'm:90+t:2',
+        fields: 'f12,f14,f3,f62,f8,f20,f184'
+      });
+      const eastmoneyUrl = `/api/eastmoney/sector?${params.toString()}`;
       const response = await fetch(eastmoneyUrl);
       const result = await response.json();
       
@@ -70,13 +81,13 @@ export function useHotSectors(): UseHotSectorsReturn {
         throw new Error('无法获取板块数据');
       }
       
-      // 转换为PipelineResult格式
+      // 转换为 PipelineResult 格式
       const sectors: PipelineResult[] = [];
       let rank = 1;
       
       for (const item of Object.values(result.data.diff) as any[]) {
         const mainForceNet = parseFloat(item.f62 || 0);
-        // 只保留主力净流入>1000万的板块
+        // 只保留主力净流入>1000 万的板块
         if (mainForceNet > 10_000_000) {
           sectors.push({
             sector: {
@@ -116,7 +127,7 @@ export function useHotSectors(): UseHotSectorsReturn {
         }
       }
       
-      // 只返回前6个
+      // 只返回前 6 个
       setData(sectors.slice(0, 6));
       setFromCache(false);
     } catch (err) {
@@ -212,7 +223,7 @@ export function useHealthCheck() {
 
   useEffect(() => {
     check();
-    // 每30秒检查一次
+    // 每 30 秒检查一次
     const interval = setInterval(check, 30000);
     return () => clearInterval(interval);
   }, [check]);

@@ -1,0 +1,7 @@
+# Cloudflare Pages 排除文件
+.venv/
+node_modules/
+.git/
+*.log
+.env
+.env.*

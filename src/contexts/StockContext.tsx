@@ -478,7 +478,7 @@ async function fetchEastmoneyData(symbol: string): Promise<{ data: Partial<Stock
   try {
     const market = symbol.substring(0, 3);
     const secid = ['600', '601', '603', '605', '688', '510', '511', '512', '513', '515', '516', '518', '519'].includes(market) ? `1.${symbol}` : `0.${symbol}`;
-    const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f43,f44,f45,f46,f47,f48,f49,f57,f58,f60,f169`;
+    const url = `/api/eastmoney/quote?secid=${secid}&fields=f43,f44,f45,f46,f47,f48,f49,f57,f58,f60,f169`;
     const response = await fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' } });
     if (!response.ok) return { data: null, source: '' };
     const json = await response.json();

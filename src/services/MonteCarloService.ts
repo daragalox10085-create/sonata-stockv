@@ -89,8 +89,8 @@ export class MonteCarloAnalyzer {
     try {
       const secid = stockCode.startsWith('6') ? `1.${stockCode}` : `0.${stockCode}`;
       
-      const quoteUrl = `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f43,f57,f58,f162,f163,f167,f169,f170,f164,f116,f171,f172,f173,f174,f175,f176,f177`;
-      const klineUrl = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secid}&klt=101&fqt=1&beg=0&end=20500101&lmt=60&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61`;
+      const quoteUrl = `/api/eastmoney/quote?secid=${secid}&fields=f43,f57,f58,f162,f163,f167,f169,f170,f164,f116,f171,f172,f173,f174,f175,f176,f177`;
+      const klineUrl = `/api/eastmoney/kline?secid=${secid}&klt=101&fqt=1&beg=0&end=20500101&lmt=60&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61`;
       
       const [quoteRes, klineRes] = await Promise.all([
         axios.get(quoteUrl),

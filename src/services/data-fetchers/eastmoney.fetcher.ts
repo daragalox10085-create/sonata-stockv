@@ -180,10 +180,12 @@ export class EastmoneyDataFetcher extends BaseDataFetcher {
 
     const secid = this.getSecid(symbol);
     const klt = timeframe === '60' ? '60' : timeframe === '240' ? '240' : '101';
-    const fields1 = 'f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13';
+    // fields1 使用最小化字段 'f1'，过长的字段列表可能导致 API 返回 rc:102
+    const fields1 = 'f1';
     const fields2 = 'f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61';
     
-    const url = `${this.baseUrl}/kline?secid=${secid}&fields1=${fields1}&fields2=${fields2}&klt=${klt}&fqt=1&lmt=${days}&end=20500101`;
+    // fqt=0 表示不复权，某些股票使用 fqt=1 会返回 rc:102
+    const url = `${this.baseUrl}/kline?secid=${secid}&fields1=${fields1}&fields2=${fields2}&klt=${klt}&fqt=0&lmt=${days}&end=20500101`;
     
     const result = await this.fetchWithRetry<any>(url, options);
     
@@ -234,15 +236,15 @@ export class EastmoneyDataFetcher extends BaseDataFetcher {
       throw new Error('Invalid K-line data format');
     }
 
-    // 东方财富格式: "日期,开盘,收盘,最低,最高,成交量,成交额,振幅,涨跌幅,涨跌额,换手率"
+    // 东方财富格式: "日期,开盘,收盘,最高,最低,成交量,成交额,振幅,涨跌幅,涨跌额,换手率"
     return klines.map((kline: string) => {
       const parts = kline.split(',');
       return {
         date: parts[0],
         open: parseFloat(parts[1]),
         close: parseFloat(parts[2]),
-        low: parseFloat(parts[3]),
-        high: parseFloat(parts[4]),
+        high: parseFloat(parts[3]),
+        low: parseFloat(parts[4]),
         volume: parseInt(parts[5]) || 0,
       };
     }).filter((k: KLinePoint) => !isNaN(k.open) && k.open > 0);

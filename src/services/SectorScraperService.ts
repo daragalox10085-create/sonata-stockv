@@ -15,8 +15,9 @@ export interface ScrapedSector {
 }
 
 export class SectorScraperService {
-  private readonly EASTMONEY_INDUSTRY_API = 'https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=20&po=1&np=1&fltt=2&invt=2&fid=f12&fs=m:90+t:2&fields=f12,f14,f3,f8,f128,f140,f141';
-  private readonly EASTMONEY_CONCEPT_API = 'https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=20&po=1&np=1&fltt=2&invt=2&fid=f12&fs=m:90+t:3&fields=f12,f14,f3,f8,f128,f140,f141';
+  // 使用 Cloudflare Functions 代理，避免 Mixed Content 错误
+  private readonly EASTMONEY_INDUSTRY_API = '/api/eastmoney/sector?pn=1&pz=20&po=1&np=1&fltt=2&invt=2&fid=f12&fs=m:90+t:2&fields=f12,f14,f3,f8,f128,f140,f141';
+  private readonly EASTMONEY_CONCEPT_API = '/api/eastmoney/sector?pn=1&pz=20&po=1&np=1&fltt=2&invt=2&fid=f12&fs=m:90+t:3&fields=f12,f14,f3,f8,f128,f140,f141';
 
   /**
    * 获取实时热门板块数据

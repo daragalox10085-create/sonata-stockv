@@ -1,0 +1,46 @@
+name: Update Hot Sectors
+
+on:
+  schedule:
+    # 每 3 天执行一次（UTC 时间 00:00，即北京时间 8:00）
+    - cron: '0 0 */3 * *'
+  workflow_dispatch: # 允许手动触发
+
+jobs:
+  update-sectors:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+      
+      - name: Run update script
+        env:
+          SEARCH_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+        run: python scripts/update_sectors.py
+      
+      - name: Commit and push changes
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add src/services/SectorServiceStatic.ts
+          git commit -m "chore: auto-update hot sectors $(date +%Y-%m-%d)" || echo "No changes to commit"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          command: pages deploy dist --project-name=sonata-stock

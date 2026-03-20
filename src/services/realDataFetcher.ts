@@ -1,4 +1,5 @@
 import { StockQuote, SectorData, DataSource } from '../types/DataContract';
+import { getHotSectors as getHotSectorsStatic, getSectorConstituents as getSectorConstituentsStatic } from './SectorServiceStatic';
 
 /**
  * 布林带计算结果接口
@@ -11,35 +12,20 @@ interface BollingerBands {
 }
 
 export class RealDataFetcher {
-  private readonly EASTMONEY_BASE = 'https://push2.eastmoney.com/api';
-  private readonly KLINE_BASE = 'https://push2his.eastmoney.com/api';
+  private readonly EASTMONEY_BASE = '/api/eastmoney';
+  private readonly KLINE_BASE = '/api/eastmoney';
 
   /**
-   * 获取板块成分股 - 关键修复：建立板块到股票的映射
+   * 获取板块成分股 - 使用静态数据
    */
   async fetchSectorConstituents(sectorCode: string): Promise<string[]> {
-    const url = `https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=500&po=1&np=1&fltt=2&invt=2&fid=f12&fs=b:${sectorCode}&fields=f12,f14`;
-    
-    try {
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
-      });
-      
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      
-      const data = await response.json();
-      if (data.data?.diff) {
-        const stocks = Object.values(data.data.diff).map((item: any) => item.f12 as string);
-        console.log(`[板块成分股] ${sectorCode}: 获取到 ${stocks.length} 只成分股`);
-        return stocks;
-      }
-    } catch (error) {
-      console.error(`[板块成分股] 获取失败 ${sectorCode}:`, error);
+    // 从静态数据获取成分股
+    const sectors = await getHotSectorsStatic();
+    const sector = sectors.find(s => s.code === sectorCode);
+    if (sector && sector.topStocks) {
+      return sector.topStocks.map(s => s.code);
     }
-    
-    return []; // 严格返回空数组，禁止mock数据
+    return [];
   }
 
   /**
@@ -165,8 +151,19 @@ export class RealDataFetcher {
    * 获取热门板块数据（带完整指标）
    */
   async fetchHotSectors(): Promise<SectorData[]> {
-    // f3=涨跌幅, f62=主力净流入, f8=换手率, f20=总市值, f184=RSI
-    const url = `${this.EASTMONEY_BASE}/qt/clist/get?pn=1&pz=100&po=1&np=1&fltt=2&invt=2&fid=f62&fs=m:90+t:2&fields=f12,f14,f3,f62,f8,f20,f184`;
+    // 从静态数据获取
+    const sectors = await getHotSectorsStatic();
+    return sectors.map(s => ({
+      code: s.code,
+      name: s.name,
+      changePercent: s.changePercent,
+      mainForceNet: s.mainCapitalInflow,
+      turnoverRate: s.turnoverRate,
+      marketValue: s.marketValue,
+      rsi: s.rsi,
+      source: 'static' as DataSource,
+      timestamp: s.timestamp
+    }));
     
     try {
       const response = await fetch(url);

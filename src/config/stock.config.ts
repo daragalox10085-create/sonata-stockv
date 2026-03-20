@@ -33,19 +33,23 @@ export const StockConfig = {
   
   // 筛选阈值
   SCREENING_THRESHOLDS: {
-    MIN_COMPOSITE_SCORE: 50,       // 最低综合评分
-    MIN_UPSIDE_POTENTIAL: 0.10,    // 最低上涨空间10%
-    MAX_DRAWDOWN_RISK: 0.15,       // 最大回撤风险15%
+    MIN_COMPOSITE_SCORE: 40,       // 最低综合评分（放宽到40）
+    MIN_UPSIDE_POTENTIAL: 0.05,    // 最低上涨空间5%（放宽）
+    MAX_DRAWDOWN_RISK: 0.20,       // 最大回撤风险20%（放宽）
   },
   
-  // 数据源配置
+  // 数据源配置 - 使用 Cloudflare Functions 代理
   DATA_SOURCES: {
     SINA: {
-      BASE_URL: 'http://hq.sinajs.cn',
+      BASE_URL: '/api/sina',
       TIMEOUT: 5000,
     },
     EASTMONEY: {
-      BASE_URL: 'http://push2.eastmoney.com/api',
+      BASE_URL: '/api/eastmoney',
+      TIMEOUT: 5000,
+    },
+    TENCENT: {
+      BASE_URL: '/api/tencent',
       TIMEOUT: 5000,
     },
   },

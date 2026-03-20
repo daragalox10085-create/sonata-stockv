@@ -4,7 +4,7 @@
  */
 
 import { StockConfig } from '../config/stock.config';
-import { sectorService } from './SectorService';
+import { getHotSectors as getHotSectorsStatic } from './SectorServiceStatic';
 import { factorService } from './FactorService';
 import { technicalService, KLineData } from './TechnicalService';
 import { unifiedStockDataService } from './UnifiedStockDataService';
@@ -19,20 +19,44 @@ export class ScreeningService {
     console.log('[ScreeningService] 开始股票筛选流程');
     
     // 1. 获取热门板块
-    const hotSectors = await sectorService.getHotSectors();
+    const hotSectors = await getHotSectorsStatic();
     console.log(`[ScreeningService] 获取到 ${hotSectors.length} 个热门板块`);
     
     // 2. 获取板块内股票
     const sectorStocks = await this.getStocksBySectors(hotSectors);
     console.log(`[ScreeningService] 获取到 ${sectorStocks.length} 只候选股票`);
     
-    // 3. 应用六因子模型筛选
-    const factorScreened = await this.applyFactorScreening(sectorStocks);
+    // 3. 应用六因子模型筛选（失败时返回原始数据）
+    let factorScreened = await this.applyFactorScreening(sectorStocks);
     console.log(`[ScreeningService] 六因子筛选后剩余 ${factorScreened.length} 只`);
     
-    // 4. 应用技术面筛选
-    const technicalScreened = await this.applyTechnicalScreening(factorScreened);
+    // 如果六因子筛选结果为空，使用原始数据
+    if (factorScreened.length === 0 && sectorStocks.length > 0) {
+      console.log('[ScreeningService] 六因子筛选为空，使用原始数据');
+      factorScreened = sectorStocks.map(s => ({
+        ...s,
+        currentPrice: 0,
+        factorScores: { valuation: 50, growth: 50, profitability: 50, quality: 50, momentum: 50, technical: 50 },
+        compositeScore: 50
+      }));
+    }
+    
+    // 4. 应用技术面筛选（失败时返回原始数据）
+    let technicalScreened = await this.applyTechnicalScreening(factorScreened);
     console.log(`[ScreeningService] 技术面筛选后剩余 ${technicalScreened.length} 只`);
+    
+    // 如果技术面筛选结果为空，使用原始数据
+    if (technicalScreened.length === 0 && factorScreened.length > 0) {
+      console.log('[ScreeningService] 技术面筛选为空，使用原始数据');
+      technicalScreened = factorScreened.map(s => ({
+        ...s,
+        technicalAnalysis: null,
+        distanceToSupport: 5,
+        upsidePotential: 10,
+        isAtLowPosition: false,
+        nearSupport: true
+      }));
+    }
     
     // 5. 综合评分排序
     const sortedStocks = this.rankStocks(technicalScreened);
@@ -182,14 +206,19 @@ export class ScreeningService {
           continue;
         }
         
-        if (upsidePotential >= StockConfig.SCREENING_THRESHOLDS.MIN_UPSIDE_POTENTIAL) {
+        // P1: 优先选择接近支撑位的股票（距离 < 8%）
+        // 即使上涨空间不大，只要接近支撑位就推荐
+        const isNearSupport = distanceToSupport <= 0.08;
+        const hasUpsidePotential = upsidePotential >= StockConfig.SCREENING_THRESHOLDS.MIN_UPSIDE_POTENTIAL;
+        
+        if (isNearSupport || hasUpsidePotential) {
           screened.push({
             ...stock,
             technicalAnalysis,
             distanceToSupport,
             upsidePotential,
             isAtLowPosition: atLowPosition,
-            nearSupport,
+            nearSupport: isNearSupport,
           });
         }
       } catch (error) {
@@ -201,10 +230,27 @@ export class ScreeningService {
   }
 
   /**
-   * 股票排序
+   * 股票排序 - P0: 优先推荐接近支撑位的股票
    */
   private rankStocks(stocks: any[]): any[] {
     return stocks.sort((a, b) => {
+      // P0: 距离支撑位越近越好（但不为负）
+      const distanceA = a.distanceToSupport;
+      const distanceB = b.distanceToSupport;
+      
+      // 优先选择距离支撑位近的股票（0-5% 最佳）
+      const isOptimalA = distanceA >= 0 && distanceA <= 0.05;
+      const isOptimalB = distanceB >= 0 && distanceB <= 0.05;
+      
+      if (isOptimalA && !isOptimalB) return -1;
+      if (!isOptimalA && isOptimalB) return 1;
+      
+      // 都在最佳区间或都不在，按距离排序（近的优先）
+      if (Math.abs(distanceA - distanceB) > 0.001) {
+        return distanceA - distanceB;
+      }
+      
+      // 距离相近，按综合得分排序
       const scoreA = this.calculateTotalScore(a);
       const scoreB = this.calculateTotalScore(b);
       return scoreB - scoreA;
